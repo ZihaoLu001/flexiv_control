@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flexiv-control"
+version = "0.1.0"
+description = "A unified, real-time execution & safety layer for Flexiv Rizon arms: one action contract for teleop, MPC, RL, and real2sim2real."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Zihao Lu" }]
+keywords = [
+    "robotics", "manipulation", "flexiv", "rizon", "controller",
+    "reinforcement-learning", "mpc", "teleoperation", "real2sim2real", "lerobot",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+# The CORE depends on numpy only. Everything else is an optional extra so the
+# client stays trivially installable into any project (RL trainer, MPC, notebook).
+dependencies = ["numpy>=1.20"]
+
+[project.urls]
+Homepage = "https://github.com/ZihaoLu001/flexiv_control"
+Repository = "https://github.com/ZihaoLu001/flexiv_control"
+
+[project.optional-dependencies]
+# Real Flexiv hardware (install per the Flexiv RDK docs; pin to your robot's version).
+flexiv = ["flexivrdk"]
+# Reinforcement learning env.
+rl = ["gymnasium>=0.29"]
+# LeRobot community integration.
+lerobot = ["lerobot"]
+# SpaceMouse teleoperation / RL intervention.
+teleop = ["pyspacemouse"]
+# Nicer YAML parsing (a tiny fallback parser is built in, so this is optional).
+yaml = ["pyyaml"]
+# MuJoCo simulation backend.
+mujoco = ["mujoco>=3.0"]
+# Dev / CI.
+dev = ["pytest>=7", "pytest-timeout", "ruff"]
+
+[project.scripts]
+flexiv-control = "flexiv_control.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# If you build a wheel and want the YAML configs bundled, copy configs/ to
+# src/flexiv_control/configs/ first; config resolution checks that location too.
+[tool.setuptools.package-data]
+flexiv_control = ["configs/**/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"

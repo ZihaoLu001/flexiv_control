@@ -1,0 +1,9 @@
+# Hardware-free configuration: kinematic FakeBackend.
+# Used by the examples, CI, and onboarding -- the whole stack runs with no robot.
+robot_id: fake_rizon
+backend: fake
+robot_sn: ""
+n_joints: 7
+control_hz: 100.0
+default_safety_profile: tabletop_safe
+q_home: [0.0, -0.7, 0.0, 1.6, 0.0, 0.9, 0.0]

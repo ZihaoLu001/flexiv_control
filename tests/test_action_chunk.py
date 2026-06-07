@@ -1,0 +1,59 @@
+import numpy as np
+import pytest
+
+from flexiv_control import CartesianChunk, CartesianDelta, CartesianWaypoint, ExecutionResult
+
+
+def test_waypoint_requires_duration_or_frames():
+    with pytest.raises(ValueError):
+        CartesianWaypoint(position=[0.4, 0.0, 0.3])
+
+
+def test_waypoint_resolve_duration_from_frames():
+    wp = CartesianWaypoint(position=[0.4, 0.0, 0.3], n_frames=20)
+    assert wp.resolve_duration(100.0) == pytest.approx(0.2)
+    wp2 = CartesianWaypoint(position=[0.4, 0.0, 0.3], duration=0.5)
+    assert wp2.resolve_duration(1000.0) == 0.5
+
+
+def test_quaternion_normalised_or_held():
+    wp = CartesianWaypoint(position=[0, 0, 0], quaternion=[0, 0, 0, 2], duration=0.1)
+    assert np.isclose(np.linalg.norm(wp.quaternion), 1.0)
+    held = CartesianWaypoint(position=[0, 0, 0], duration=0.1)
+    assert held.quaternion is None
+
+
+def test_from_waypoint_array_shape_and_mapping():
+    u = np.array(
+        [
+            [0.45, 0.0, 0.30, 1.0, 20],
+            [0.50, 0.05, 0.25, 0.0, 10],
+        ]
+    )
+    chunk = CartesianChunk.from_waypoint_array(u)
+    assert chunk.horizon == 2
+    # gripper command width scales with w in [0,1] -> [0, 0.08]
+    assert chunk.waypoints[0].gripper.width == pytest.approx(0.08)
+    assert chunk.waypoints[1].gripper.width == pytest.approx(0.0)
+    # n_frames preserved as integers
+    assert chunk.waypoints[0].n_frames == 20
+    assert chunk.waypoints[1].n_frames == 10
+    # orientation held
+    assert chunk.waypoints[0].quaternion is None
+    # total duration at 100 Hz = (20+10)/100
+    assert chunk.total_duration(100.0) == pytest.approx(0.30)
+
+
+def test_from_waypoint_array_rejects_bad_shape():
+    with pytest.raises(ValueError):
+        CartesianChunk.from_waypoint_array(np.zeros((3, 4)))
+
+
+def test_cartesian_delta_shape():
+    d = CartesianDelta(delta=[0.01, 0, 0, 0, 0, 0])
+    assert d.delta.shape == (6,)
+
+
+def test_execution_result_defaults():
+    r = ExecutionResult()
+    assert r.success and not r.clipped and r.stop_reason == "none"

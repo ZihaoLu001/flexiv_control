@@ -1,0 +1,17 @@
+# Execute a Cartesian chunk (the planner / MPC / scripted-manipulation workhorse).
+# Goal
+CartesianWaypoint[] waypoints
+string frame                   # "base" (default) or "tcp"
+string safety_profile          # optional named profile to apply before executing ("" = leave as-is)
+---
+# Result -- the signal a planner can log under its "execution" failure category.
+bool success
+string stop_reason
+float64 path_tracking_error    # max |commanded - achieved| TCP position over the chunk (m)
+float64 max_tcp_speed          # m/s
+float64 max_wrench             # N
+bool clipped                   # true if safety clipped any setpoint
+---
+# Feedback
+int32 tick
+float64[7] current_pose

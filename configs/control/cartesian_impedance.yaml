@@ -1,0 +1,22 @@
+# Cartesian impedance presets (reference templates).
+#
+# Flexiv's SetCartesianImpedance(K, Z) takes a stiffness vector K and a damping
+# RATIO Z (default 0.7), not an absolute damping matrix -- these presets follow
+# that API. Order is [x, y, z, rx, ry, rz]; linear N/m, angular Nm/rad.
+#
+# Load in code, e.g.:
+#   from flexiv_control import ImpedanceParams
+#   imp = ImpedanceParams(stiffness=[...], damping_ratio=[...])
+#   robot.start_cartesian_impedance(impedance=imp)
+
+stiff:        # rigid free-space tracking
+  stiffness: [2000, 2000, 2000, 100, 100, 100]
+  damping_ratio: [0.7, 0.7, 0.7, 0.7, 0.7, 0.7]
+
+default:      # general manipulation
+  stiffness: [800, 800, 800, 40, 40, 40]
+  damping_ratio: [0.7, 0.7, 0.7, 0.7, 0.7, 0.7]
+
+compliant:    # contact-rich push / place / insertion
+  stiffness: [400, 400, 300, 20, 20, 20]
+  damping_ratio: [0.9, 0.9, 0.9, 0.9, 0.9, 0.9]

@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+title: "flexiv_control: a unified execution & safety layer for Flexiv Rizon arms"
+message: "If you use this software, please cite it using these metadata."
+type: software
+authors:
+  - given-names: Zihao
+    family-names: Lu
+    alias: ZihaoLu001
+repository-code: "https://github.com/ZihaoLu001/flexiv_control"
+url: "https://github.com/ZihaoLu001/flexiv_control"
+abstract: >-
+  A thin, real-time execution-and-safety layer between a high-level decision
+  maker (policy, MPC planner, or teleoperator) and a Flexiv Rizon arm. It
+  defines one action contract (Cartesian/joint chunks and deltas) used across
+  teleoperation, model-predictive control, reinforcement learning, and
+  real-to-sim-to-real manipulation, with a first-class safety supervisor, a
+  backend switch for real hardware / a dependency-free simulator / MuJoCo, an
+  optional cross-process server and client, a Gymnasium environment, a LeRobot
+  adapter, an optional C++ 1 kHz real-time daemon, and an optional ROS 2
+  overlay. Community project; not affiliated with Flexiv Robotics.
+keywords:
+  - robotics
+  - manipulation
+  - Flexiv Rizon
+  - robot controller
+  - reinforcement learning
+  - model predictive control
+  - teleoperation
+  - real2sim2real
+  - LeRobot
+license: Apache-2.0
+version: 0.1.0

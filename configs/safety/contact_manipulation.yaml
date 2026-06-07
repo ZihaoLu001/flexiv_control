@@ -1,0 +1,27 @@
+# contact_manipulation -- moderate speeds, higher allowed wrench for push/place/press.
+# Pair with a lower Cartesian stiffness (see configs/control/cartesian_impedance.yaml)
+# so the arm is compliant on contact. Validate force thresholds on your setup.
+name: contact_manipulation
+
+workspace:
+  x: [0.25, 0.75]
+  y: [-0.45, 0.45]
+  z: [0.04, 0.70]
+
+tcp_limits:
+  max_linear_speed: 0.20
+  max_angular_speed: 0.50
+  max_pose_jump_linear: 0.025
+  max_pose_jump_angular: 0.12
+
+joint_limits:
+  margin_rad: 0.08
+  max_joint_speed_scale: 0.25
+
+contact:
+  max_wrench: [60, 60, 60, 8, 8, 8]
+
+watchdog:
+  command_timeout_ms: 120
+  state_timeout_ms: 20
+  stop_on_stale_command: true

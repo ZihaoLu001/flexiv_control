@@ -1,0 +1,65 @@
+name: ci
+
+# Lint + unit tests. Everything runs on the dependency-free FakeBackend, so CI
+# needs no robot, no RDK, and no GPU. The core depends only on numpy.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install (core + dev + rl extra)
+        run: |
+          python -m pip install --upgrade pip
+          # rl extra pulls gymnasium so the Gym env tests exercise the real shim path
+          pip install -e ".[dev,rl]"
+
+      - name: Lint (ruff)
+        run: ruff check src tests examples
+
+      - name: Run tests
+        run: pytest -q
+
+  # A second job that installs ONLY the core (numpy) to prove the client stays
+  # importable and the fake-backend path works with zero optional dependencies.
+  core-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install core only
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Import + fake smoke test
+        run: |
+          python - <<'PY'
+          import flexiv_control as fc
+          from flexiv_control import Robot, RobotConfig, CartesianChunk
+          r = Robot(RobotConfig(backend="fake"))
+          with r:
+              r.start_cartesian_impedance()
+              res = r.execute_cartesian_chunk(
+                  CartesianChunk.from_waypoint_array([[0.45,0,0.30,1.0,20],[0.50,0,0.28,0.0,20]])
+              )
+              assert res.success, res
+          print("core-only smoke OK; version", fc.__version__)
+          PY

@@ -1,0 +1,18 @@
+# Real-robot configuration for the lab's Flexiv Rizon 4s.
+#
+# Edit robot_sn to your arm's serial number (find it in Flexiv Elements), enable
+# "Remote / RDK mode" on the pendant, and make sure the RDK Python module
+# (flexivrdk) is installed. Then:
+#
+#   from flexiv_control import Robot
+#   robot = Robot.from_config("rizon4s_lab")   # or pass the file path
+#
+# RT streaming modes need the Professional RDK license; NRT works on Standard.
+robot_id: rizon4s_lab
+backend: flexiv_rdk
+robot_sn: "Rizon4s-XXXXXX"        # <-- set me
+gripper_name: Flexiv-GraspG2      # <-- set me (or remove if no gripper)
+n_joints: 7
+control_hz: 100.0
+default_safety_profile: tabletop_safe
+q_home: [0.0, -0.7, 0.0, 1.6, 0.0, 0.9, 0.0]

@@ -1,0 +1,7 @@
+# Switch the control mode. mode is one of the flexiv_control.types.ControlMode
+# names, e.g. "NRT_CARTESIAN_MOTION_FORCE", "NRT_JOINT_IMPEDANCE".
+string mode
+bool realtime                  # request the RT variant where one exists (needs Pro RDK license + C++ daemon)
+---
+bool ok
+string message

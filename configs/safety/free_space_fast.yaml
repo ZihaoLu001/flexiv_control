@@ -1,0 +1,26 @@
+# free_space_fast -- larger envelope and higher speeds for free-space reaching.
+# NOT for contact tasks (wrench stop is loose). Validate before use.
+name: free_space_fast
+
+workspace:
+  x: [0.15, 0.85]
+  y: [-0.55, 0.55]
+  z: [0.05, 0.90]
+
+tcp_limits:
+  max_linear_speed: 0.80
+  max_angular_speed: 1.50
+  max_pose_jump_linear: 0.08
+  max_pose_jump_angular: 0.30
+
+joint_limits:
+  margin_rad: 0.05
+  max_joint_speed_scale: 0.60
+
+contact:
+  max_wrench: [80, 80, 80, 10, 10, 10]
+
+watchdog:
+  command_timeout_ms: 100
+  state_timeout_ms: 20
+  stop_on_stale_command: true

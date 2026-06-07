@@ -1,0 +1,52 @@
+# Byte-compiled / optimized / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+*.so
+
+# Editable install / packaging
+pip-wheel-metadata/
+*.editable.*
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / coverage / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# C++ build (Tier B RT daemon)
+cpp/build/
+cpp/cmake-build-*/
+compile_commands.json
+
+# ROS 2 overlay
+ros2/build/
+ros2/install/
+ros2/log/
+
+# Recorded datasets / logs / checkpoints (do not commit large artifacts)
+data/
+datasets/
+logs/
+*.mp4
+*.parquet
+*.ckpt
+*.pt
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

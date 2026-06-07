@@ -1,0 +1,29 @@
+# tabletop_safe -- the conservative default for shared/tabletop manipulation.
+#
+# These numbers are a STARTING TEMPLATE. Validate them on YOUR cell at low speed
+# before trusting them; workspace bounds in particular are cell-specific.
+name: tabletop_safe
+
+# Axis-aligned TCP workspace box, base frame, metres.
+workspace:
+  x: [0.25, 0.75]
+  y: [-0.45, 0.45]
+  z: [0.06, 0.70]
+
+tcp_limits:
+  max_linear_speed: 0.25       # m/s
+  max_angular_speed: 0.60      # rad/s
+  max_pose_jump_linear: 0.03   # m  per control tick
+  max_pose_jump_angular: 0.15  # rad per control tick
+
+joint_limits:
+  margin_rad: 0.08
+  max_joint_speed_scale: 0.30  # fraction of nominal joint velocity limit
+
+contact:
+  max_wrench: [40, 40, 40, 5, 5, 5]   # [fx,fy,fz,tx,ty,tz] -> hard stop if exceeded
+
+watchdog:
+  command_timeout_ms: 100
+  state_timeout_ms: 20
+  stop_on_stale_command: true

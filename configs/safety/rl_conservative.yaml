@@ -1,0 +1,26 @@
+# rl_conservative -- tight envelope + low speeds for autonomous RL exploration.
+# The default profile for FlexivRealEnv. A misbehaving policy stays slow and boxed in.
+name: rl_conservative
+
+workspace:
+  x: [0.35, 0.65]
+  y: [-0.25, 0.25]
+  z: [0.10, 0.50]
+
+tcp_limits:
+  max_linear_speed: 0.15
+  max_angular_speed: 0.40
+  max_pose_jump_linear: 0.02
+  max_pose_jump_angular: 0.10
+
+joint_limits:
+  margin_rad: 0.12
+  max_joint_speed_scale: 0.20
+
+contact:
+  max_wrench: [25, 25, 25, 3, 3, 3]
+
+watchdog:
+  command_timeout_ms: 80
+  state_timeout_ms: 20
+  stop_on_stale_command: true

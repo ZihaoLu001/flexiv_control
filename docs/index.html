@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>flexiv_control — real-robot controller for Flexiv Rizon</title>
+<meta name="description" content="A unified, real-time execution & safety layer for Flexiv Rizon arms: one action contract for teleop, MPC, RL, and real2sim2real. Community project, not affiliated with Flexiv Robotics."/>
+<link rel="icon" href="assets/banner.svg"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<style>
+  :root{
+    --ink:#080b12; --ink2:#0b1019; --panel:#0e1422; --panel2:#111a2b;
+    --line:#22304a; --line-soft:#5c7cb0;
+    --txt:#e8eef7; --muted:#9fb2cc; --muted2:#7c8db0;
+    --cyan:#19e3c4; --blue:#4da3ff; --amber:#f5b342; --danger:#ff6b6b;
+    --disp:'Chakra Petch',system-ui,sans-serif;
+    --body:'IBM Plex Sans',system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+    --maxw:1180px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--ink); color:var(--txt); font-family:var(--body);
+    line-height:1.6; -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  }
+  /* blueprint grid + glow backdrop */
+  body::before{
+    content:""; position:fixed; inset:0; z-index:-2;
+    background:
+      radial-gradient(900px 520px at 78% -8%, rgba(25,227,196,.13), transparent 60%),
+      radial-gradient(800px 600px at 10% 110%, rgba(77,163,255,.10), transparent 60%),
+      linear-gradient(180deg,var(--ink),var(--ink2));
+  }
+  body::after{
+    content:""; position:fixed; inset:0; z-index:-2; opacity:.5; pointer-events:none;
+    background-image:
+      linear-gradient(rgba(92,124,176,.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(92,124,176,.06) 1px, transparent 1px),
+      linear-gradient(rgba(92,124,176,.10) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(92,124,176,.10) 1px, transparent 1px);
+    background-size:32px 32px,32px 32px,160px 160px,160px 160px;
+  }
+  .grain{position:fixed; inset:0; z-index:-1; pointer-events:none; opacity:.035;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  a{color:var(--cyan); text-decoration:none}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px}
+  .mono{font-family:var(--mono)}
+  .accent{color:var(--cyan)}
+
+  /* nav */
+  header.nav{position:sticky; top:0; z-index:50; backdrop-filter:blur(10px);
+    background:rgba(8,11,18,.72); border-bottom:1px solid var(--line);}
+  .nav-in{display:flex; align-items:center; gap:20px; height:60px}
+  .brand{font-family:var(--mono); font-weight:700; font-size:17px; letter-spacing:.5px; color:var(--txt)}
+  .brand b{color:var(--cyan)}
+  .nav-links{margin-left:auto; display:flex; gap:22px; align-items:center}
+  .nav-links a{color:var(--muted); font-size:14px; font-weight:500}
+  .nav-links a:hover{color:var(--txt)}
+  .btn{display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-weight:500;
+    font-size:14px; padding:9px 16px; border-radius:8px; border:1px solid var(--line);
+    color:var(--txt); background:var(--panel); transition:.18s; white-space:nowrap}
+  .btn:hover{border-color:var(--cyan); transform:translateY(-1px)}
+  .btn.primary{background:linear-gradient(135deg,var(--cyan),var(--blue)); color:#04121a; border:none; font-weight:700}
+  .btn.primary:hover{box-shadow:0 8px 28px rgba(25,227,196,.35)}
+  @media(max-width:760px){.nav-links a.hide-sm{display:none}}
+
+  /* hero */
+  .hero{padding:64px 0 40px; position:relative}
+  .hero-grid{display:grid; grid-template-columns:1.05fr .95fr; gap:40px; align-items:center}
+  @media(max-width:920px){.hero-grid{grid-template-columns:1fr; gap:24px}}
+  .eyebrow{font-family:var(--mono); color:var(--cyan); font-size:13px; letter-spacing:2px; text-transform:uppercase}
+  h1.title{font-family:var(--mono); font-weight:700; font-size:clamp(40px,7vw,72px); line-height:1; margin:14px 0 16px; letter-spacing:-2px}
+  h1.title .u{color:var(--cyan)}
+  .lede{font-size:clamp(16px,2.2vw,20px); color:var(--muted); max-width:560px; margin:0 0 22px}
+  .cta{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px}
+  .chips{display:flex; gap:8px; flex-wrap:wrap}
+  .chip{font-family:var(--mono); font-size:12px; color:var(--muted); background:var(--panel);
+    border:1px solid var(--line); border-radius:6px; padding:5px 10px}
+  .chip.warn{color:var(--amber); border-color:rgba(245,179,66,.4)}
+
+  /* hero stagger animation */
+  .rise{opacity:0; transform:translateY(14px); animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1; transform:none}}
+  .d1{animation-delay:.05s}.d2{animation-delay:.15s}.d3{animation-delay:.25s}.d4{animation-delay:.35s}.d5{animation-delay:.45s}.d6{animation-delay:.55s}
+
+  /* hero diagram card */
+  .stage{background:linear-gradient(180deg,var(--panel),var(--ink2)); border:1px solid var(--line);
+    border-radius:16px; padding:8px; box-shadow:0 30px 80px rgba(0,0,0,.45); position:relative; overflow:hidden}
+  .stage .tag{position:absolute; top:12px; left:14px; font-family:var(--mono); font-size:11px; color:var(--muted2)}
+  .stage .live{position:absolute; top:12px; right:14px; font-family:var(--mono); font-size:11px; color:var(--cyan); display:flex; align-items:center; gap:6px}
+  .live .dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan);animation:blink 1.4s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+  .traj{stroke-dasharray:420; stroke-dashoffset:420; animation:draw 3s ease-in-out .4s forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  .tcp{offset-path:path("M40 178 C 120 70, 210 70, 250 118"); animation:run 3s ease-in-out .4s forwards, hold 4s 3.4s infinite}
+  @keyframes run{from{offset-distance:0%}to{offset-distance:100%}}
+  @keyframes hold{0%,100%{offset-distance:100%}}
+  .arm{transform-box:fill-box; transform-origin:40px 178px; animation:sway 6s ease-in-out 3.4s infinite}
+  @keyframes sway{0%,100%{transform:rotate(0)}50%{transform:rotate(-1.2deg)}}
+  .ping{animation:ping 2.2s ease-out 3.4s infinite}
+  @keyframes ping{0%{r:13;opacity:.7}70%,100%{r:26;opacity:0}}
+
+  /* sections */
+  section{padding:54px 0}
+  .kicker{font-family:var(--mono); color:var(--blue); font-size:12px; letter-spacing:2px; text-transform:uppercase}
+  h2{font-family:var(--disp); font-weight:700; font-size:clamp(26px,4vw,38px); margin:8px 0 8px; letter-spacing:-.5px}
+  .sub{color:var(--muted); max-width:680px; margin:0 0 26px}
+  .rule{height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent); border:0; margin:0}
+
+  .quote{border-left:3px solid var(--cyan); padding:14px 20px; background:var(--panel);
+    border-radius:0 12px 12px 0; color:var(--muted); font-size:17px}
+  .quote b{color:var(--txt)}
+
+  /* feature grid */
+  .grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr 1fr}}
+  @media(max-width:600px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px;
+    transition:.2s; position:relative; overflow:hidden}
+  .card:hover{border-color:rgba(25,227,196,.5); transform:translateY(-3px); box-shadow:0 16px 40px rgba(0,0,0,.35)}
+  .card .ic{font-family:var(--mono); font-size:13px; color:var(--cyan); border:1px solid var(--line);
+    border-radius:7px; width:34px; height:34px; display:grid; place-items:center; margin-bottom:12px;
+    background:var(--ink2)}
+  .card h3{font-family:var(--disp); font-weight:600; font-size:18px; margin:0 0 6px}
+  .card p{color:var(--muted); font-size:14.5px; margin:0}
+  .card code{font-family:var(--mono); color:var(--blue); font-size:13px}
+
+  /* tiers */
+  .tiers{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  @media(max-width:780px){.tiers{grid-template-columns:1fr}}
+  .tier{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:24px; position:relative}
+  .tier.b{border-color:rgba(77,163,255,.35)}
+  .tier .lab{font-family:var(--mono); font-size:12px; letter-spacing:1px; color:var(--cyan)}
+  .tier.b .lab{color:var(--blue)}
+  .tier h3{font-family:var(--disp); font-weight:700; font-size:22px; margin:6px 0 14px}
+  .tier ul{list-style:none; padding:0; margin:0}
+  .tier li{display:flex; gap:10px; padding:7px 0; color:var(--muted); font-size:14.5px; border-top:1px dashed var(--line)}
+  .tier li:first-child{border-top:0}
+  .tier li b{color:var(--txt); font-family:var(--mono); font-weight:500; min-width:78px; font-size:13px}
+
+  /* flow diagram */
+  .flow{display:flex; flex-direction:column; gap:0; align-items:center; font-family:var(--mono); font-size:13px}
+  .flow .row{display:flex; gap:10px; flex-wrap:wrap; justify-content:center}
+  .node{background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:9px 14px; color:var(--muted)}
+  .node.hi{border-color:var(--cyan); color:var(--txt)}
+  .node.spine{background:linear-gradient(135deg,rgba(25,227,196,.14),rgba(77,163,255,.10)); border-color:rgba(25,227,196,.5); color:var(--txt)}
+  .down{color:var(--line-soft); font-size:18px; line-height:1; margin:7px 0}
+
+  /* code */
+  .codecard{background:#070a11; border:1px solid var(--line); border-radius:14px; overflow:hidden}
+  .codebar{display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--ink2)}
+  .codebar .dots{display:flex; gap:6px}
+  .codebar .dots i{width:11px;height:11px;border-radius:50%;display:block}
+  .codebar .fn{font-family:var(--mono); font-size:12px; color:var(--muted2); margin-left:6px}
+  .copy{margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--muted); background:var(--panel);
+    border:1px solid var(--line); border-radius:6px; padding:4px 10px; cursor:pointer; transition:.15s}
+  .copy:hover{color:var(--cyan); border-color:var(--cyan)}
+  pre{margin:0; padding:18px; overflow:auto; font-family:var(--mono); font-size:13.5px; line-height:1.7}
+  pre .k{color:#ff9b6b} pre .s{color:var(--cyan)} pre .c{color:var(--muted2)} pre .f{color:var(--blue)} pre .n{color:#e3c06b}
+
+  .two{display:grid; grid-template-columns:1.2fr .8fr; gap:18px; align-items:start}
+  @media(max-width:860px){.two{grid-template-columns:1fr}}
+  .install code{display:block; font-family:var(--mono); font-size:13px; color:var(--muted); padding:8px 0; border-bottom:1px dashed var(--line)}
+  .install code:last-child{border:0}
+  .install b{color:var(--cyan)}
+
+  /* docs grid */
+  .docs{display:grid; grid-template-columns:repeat(2,1fr); gap:12px}
+  @media(max-width:760px){.docs{grid-template-columns:1fr}}
+  .doc{display:flex; gap:14px; align-items:flex-start; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:16px; transition:.18s}
+  .doc:hover{border-color:rgba(25,227,196,.5); transform:translateX(3px)}
+  .doc .num{font-family:var(--mono); color:var(--blue); font-size:13px}
+  .doc h4{margin:0 0 3px; font-family:var(--disp); font-weight:600; font-size:16px; color:var(--txt)}
+  .doc p{margin:0; color:var(--muted); font-size:13.5px}
+
+  footer{border-top:1px solid var(--line); padding:34px 0 60px; margin-top:30px}
+  .foot{display:flex; gap:16px; justify-content:space-between; flex-wrap:wrap; align-items:center; color:var(--muted2); font-size:13px}
+  .foot .mono{font-size:13px}
+  .disclaimer{font-size:12.5px; color:var(--muted2); margin-top:14px; line-height:1.6}
+
+  @media(prefers-reduced-motion:reduce){
+    *{animation:none!important}
+    .rise{opacity:1; transform:none}
+    .traj{stroke-dashoffset:0}.tcp{offset-distance:100%}
+  }
+</style>
+</head>
+<body>
+<div class="grain"></div>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <span class="brand">flexiv<b>_</b>control</span>
+    <nav class="nav-links">
+      <a class="hide-sm" href="#features">Features</a>
+      <a class="hide-sm" href="#tiers">Real-time</a>
+      <a class="hide-sm" href="#start">Quick start</a>
+      <a class="hide-sm" href="#docs">Docs</a>
+      <a class="btn" href="https://github.com/ZihaoLu001/flexiv_control" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow rise d1">// real-robot controller</div>
+      <h1 class="title rise d2">flexiv<span class="u">_</span>control</h1>
+      <p class="lede rise d3">A unified, real-time <b style="color:var(--txt)">execution &amp; safety layer</b> for Flexiv&nbsp;Rizon arms — one action contract for teleoperation, MPC, reinforcement learning, and real-to-sim-to-real manipulation.</p>
+      <div class="cta rise d4">
+        <a class="btn primary" href="#start">⚡ Quick start</a>
+        <a class="btn" href="https://github.com/ZihaoLu001/flexiv_control" target="_blank" rel="noopener">★ Star on GitHub</a>
+        <a class="btn" href="#docs">Read the docs</a>
+      </div>
+      <div class="chips rise d5">
+        <span class="chip">Apache-2.0</span>
+        <span class="chip">Python ≥ 3.8</span>
+        <span class="chip">numpy-only core</span>
+        <span class="chip">38 tests passing</span>
+      </div>
+      <div class="chips rise d6" style="margin-top:10px">
+        <span class="chip warn">⚠ Community project — NOT affiliated with Flexiv Robotics</span>
+      </div>
+    </div>
+
+    <!-- animated stage -->
+    <div class="stage rise d4">
+      <span class="tag mono">rizon · base frame</span>
+      <span class="live mono"><span class="dot"></span>live setpoint</span>
+      <svg viewBox="0 0 360 250" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block">
+        <defs>
+          <linearGradient id="arm" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#19e3c4"/><stop offset="1" stop-color="#4da3ff"/>
+          </linearGradient>
+        </defs>
+        <!-- workspace box -->
+        <rect x="150" y="40" width="160" height="160" rx="8" fill="none" stroke="#4da3ff" stroke-opacity=".30" stroke-dasharray="4 6"/>
+        <text x="150" y="32" font-family="JetBrains Mono, monospace" font-size="11" fill="#4da3ff" fill-opacity=".8">workspace box</text>
+        <!-- trajectory -->
+        <path class="traj" d="M40 178 C 120 70, 210 70, 250 118" fill="none" stroke="#19e3c4" stroke-opacity=".55" stroke-width="2"/>
+        <!-- arm -->
+        <g class="arm">
+          <g stroke="url(#arm)" stroke-width="8" stroke-linecap="round" fill="none">
+            <path d="M40 178 L 100 108"/>
+            <path d="M100 108 L 182 96"/>
+            <path d="M182 96 L 250 118"/>
+          </g>
+          <g fill="#0a0e16" stroke="#19e3c4" stroke-width="3">
+            <circle cx="40" cy="178" r="11"/>
+            <circle cx="100" cy="108" r="9"/>
+            <circle cx="182" cy="96" r="9"/>
+          </g>
+          <rect x="20" y="190" width="40" height="14" rx="3" fill="#1a2740" stroke="#2c4068"/>
+        </g>
+        <!-- moving TCP marker -->
+        <g class="tcp">
+          <circle class="ping" cx="0" cy="0" r="13" fill="none" stroke="#19e3c4"/>
+          <circle cx="0" cy="0" r="6" fill="#19e3c4"/>
+          <path d="M0 -16 v-9 M0 16 v9 M-16 0 h-9 M16 0 h9" stroke="#19e3c4" stroke-width="1.5"/>
+        </g>
+      </svg>
+      <div style="display:flex; gap:14px; padding:8px 12px 12px; font-family:var(--mono); font-size:11px; color:var(--muted2)">
+        <span>safety: <span class="accent">tabletop_safe</span></span>
+        <span>rate: <span class="accent">100&nbsp;Hz</span></span>
+        <span>track_err: <span class="accent">2.5&nbsp;mm</span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><hr class="rule"/></div>
+
+<!-- WHY -->
+<section>
+  <div class="wrap">
+    <div class="kicker">why it looks the way it does</div>
+    <h2>The shape the field converged on</h2>
+    <p class="quote">A <b>thin Python client</b> over a <b>real-time-capable control loop</b>, <b>one action interface</b>, and <b>sim + real behind a single backend switch</b> — what Deoxys, Polymetis, frankapy, SERL/HIL-SERL, and LeRobot all settled on, specialized here to the Rizon. The decisive fact: the Rizon runs its hard real-time loop <b>inside the robot</b>, so a Python host loop is genuinely reactive.</p>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="kicker">what you get</div>
+    <h2>One contract. Many consumers. Safe by default.</h2>
+    <p class="sub">Every planner, RL trainer, MPC loop, and teleop session speaks the same action contract; every backend consumes the same safety-filtered setpoint stream.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">⛓</div><h3>One action contract</h3><p><code>CartesianChunk</code>, <code>CartesianDelta</code>, <code>JointChunk</code>, <code>GripperCommand</code> + a quantified <code>ExecutionResult</code>. <code>from_waypoint_array(u)</code> ingests a planner's <code>(H,5)</code> array directly.</p></div>
+      <div class="card"><div class="ic">🛡</div><h3>Safety is first-class</h3><p>A named, version-controlled <code>SafetyProfile</code> + a microsecond per-tick filter: workspace box, speed &amp; jump caps, joint limits, contact-wrench stop, watchdog. It clips or rejects — and <b>reports</b>.</p></div>
+      <div class="card"><div class="ic">⚡</div><h3>Two real-time tiers</h3><p>Tier A: a 100–500&nbsp;Hz Python loop, no root, Standard license. Tier B: an optional C++ 1&nbsp;kHz daemon. <b>Same contract &amp; wire protocol</b> across both.</p></div>
+      <div class="card"><div class="ic">⇄</div><h3>Backend-agnostic</h3><p>Develop offline on <code>fake</code>, simulate on <code>mujoco</code>, deploy on a real Rizon via RDK — your policy code never changes.</p></div>
+      <div class="card"><div class="ic">◰</div><h3>Optional layers</h3><p>A numpy-only server + <code>RemoteRobot</code> client (no ROS), a Gymnasium env, a LeRobot adapter, SpaceMouse teleop / RL intervention, and a ROS 2 overlay with a MoveIt-Servo jog.</p></div>
+      <div class="card"><div class="ic">π</div><h3>numpy-only core</h3><p>The client installs with nothing but numpy and runs anywhere — an RL trainer, an MPC loop, a notebook. Everything heavier is an opt-in extra.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- TIERS -->
+<section id="tiers">
+  <div class="wrap">
+    <div class="kicker">real-time, two ways</div>
+    <h2>Start on Tier&nbsp;A. Upgrade only if a measurement says so.</h2>
+    <p class="sub">The Rizon servos at 1&nbsp;kHz internally, so the host only streams setpoints. Both tiers share everything above the backend line.</p>
+    <div class="tiers">
+      <div class="tier a">
+        <div class="lab">TIER A · DEFAULT</div>
+        <h3>Python control loop</h3>
+        <ul>
+          <li><b>loop</b><span>100–500&nbsp;Hz host loop, RDK non-real-time modes</span></li>
+          <li><b>needs</b><span>nothing special — no root, no RT kernel, no C++</span></li>
+          <li><b>license</b><span>Flexiv RDK Standard</span></li>
+          <li><b>for</b><span>planner chunks, MPC, reinforcement learning</span></li>
+        </ul>
+      </div>
+      <div class="tier b">
+        <div class="lab">TIER B · OPTIONAL</div>
+        <h3>C++ 1&nbsp;kHz daemon</h3>
+        <ul>
+          <li><b>loop</b><span>true 1&nbsp;kHz host loop, RDK real-time modes</span></li>
+          <li><b>needs</b><span>PREEMPT_RT kernel, root, <span class="mono">rdk::Scheduler</span></span></li>
+          <li><b>license</b><span>Flexiv RDK Professional</span></li>
+          <li><b>for</b><span>high-rate streaming MPC, tight contact, torque research</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section>
+  <div class="wrap">
+    <div class="kicker">the spine</div>
+    <h2>The contract is the only thing crossing the boundary</h2>
+    <p class="sub">Server, Gym env, and ROS overlay are pure pass-through — they serialize and forward these exact objects.</p>
+    <div class="card" style="padding:28px">
+      <div class="flow">
+        <div class="row">
+          <span class="node">Language policy</span>
+          <span class="node">MPC planner</span>
+          <span class="node">RL trainer</span>
+          <span class="node">SpaceMouse</span>
+        </div>
+        <div class="down">▾</div>
+        <div class="row"><span class="node spine">CartesianChunk · CartesianDelta · JointChunk · GripperCommand</span></div>
+        <div class="down">▾</div>
+        <div class="row">
+          <span class="node hi">Robot facade</span><span class="node hi">SafetyFilter — per&nbsp;tick</span><span class="node hi">Interpolator</span>
+        </div>
+        <div class="down">▾</div>
+        <div class="row">
+          <span class="node">FlexivRdkBackend</span><span class="node">FakeBackend</span><span class="node">MujocoBackend</span>
+        </div>
+        <div class="down">▾</div>
+        <div class="row"><span class="node spine">Rizon — hard real-time loop runs inside the robot</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- QUICK START -->
+<section id="start">
+  <div class="wrap">
+    <div class="kicker">no hardware needed</div>
+    <h2>Running in three lines</h2>
+    <p class="sub">The dependency-free <code style="font-family:var(--mono);color:var(--blue)">fake</code> backend runs the whole stack — contract, safety, interpolation — with no robot.</p>
+    <div class="two">
+      <div class="codecard">
+        <div class="codebar">
+          <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+          <span class="fn">quickstart.py</span>
+          <button class="copy" onclick="copyCode(this)">copy</button>
+        </div>
+<pre id="code"><span class="k">from</span> flexiv_control <span class="k">import</span> Robot, RobotConfig, CartesianChunk
+
+robot = <span class="f">Robot</span>(<span class="f">RobotConfig</span>(backend=<span class="s">"fake"</span>))   <span class="c"># dependency-free sim</span>
+robot.<span class="f">connect</span>()
+robot.<span class="f">start_cartesian_impedance</span>()
+
+<span class="c"># a short Cartesian chunk: (x, y, z, gripper, n_frames)</span>
+chunk = CartesianChunk.<span class="f">from_waypoint_array</span>([[<span class="n">0.45</span>, <span class="n">0.0</span>, <span class="n">0.30</span>, <span class="n">1.0</span>, <span class="n">20</span>],
+                                            [<span class="n">0.50</span>, <span class="n">0.0</span>, <span class="n">0.25</span>, <span class="n">0.0</span>, <span class="n">20</span>]])
+result = robot.<span class="f">execute_cartesian_chunk</span>(chunk)
+<span class="f">print</span>(result.success, result.path_tracking_error)
+
+robot.<span class="f">disconnect</span>()</pre>
+      </div>
+      <div>
+        <div class="card install">
+          <h3 style="font-family:var(--disp);font-weight:600;font-size:16px;margin:0 0 10px">Install</h3>
+          <code><b>pip install -e .</b>            <span style="color:var(--muted2)"># core</span></code>
+          <code>pip install -e <b>".[rl]"</b>      <span style="color:var(--muted2)"># Gym env</span></code>
+          <code>pip install -e <b>".[teleop]"</b>  <span style="color:var(--muted2)"># SpaceMouse</span></code>
+          <code>pip install -e <b>".[lerobot]"</b> <span style="color:var(--muted2)"># LeRobot</span></code>
+          <code>pip install -e <b>".[mujoco]"</b>  <span style="color:var(--muted2)"># sim</span></code>
+          <code>pip install -e <b>".[flexiv]"</b>  <span style="color:var(--muted2)"># real arm</span></code>
+        </div>
+        <div style="height:14px"></div>
+        <div class="card">
+          <h3 style="font-family:var(--disp);font-weight:600;font-size:16px;margin:0 0 8px">Or the CLI</h3>
+          <p style="margin:0;color:var(--muted);font-family:var(--mono);font-size:13px">$ flexiv-control <span class="accent">demo</span></p>
+          <p style="margin:6px 0 0;color:var(--muted2);font-size:13px">Offline FakeBackend demo — no hardware.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DOCS -->
+<section id="docs">
+  <div class="wrap">
+    <div class="kicker">read more</div>
+    <h2>Documentation</h2>
+    <p class="sub">Ten focused guides — architecture, the contract, safety, hardware setup, and one integration walkthrough per use case.</p>
+    <div class="docs" id="docgrid"></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <span class="brand">flexiv<b>_</b>control</span>
+      <span class="mono">
+        <a href="https://github.com/ZihaoLu001/flexiv_control" target="_blank" rel="noopener">GitHub</a> ·
+        <a href="https://github.com/ZihaoLu001/flexiv_control/blob/main/LICENSE" target="_blank" rel="noopener">Apache-2.0</a> ·
+        <a href="https://github.com/ZihaoLu001/flexiv_control/blob/main/CITATION.cff" target="_blank" rel="noopener">Cite</a>
+      </span>
+    </div>
+    <p class="disclaimer">Community project, not affiliated with, endorsed by, or supported by Flexiv Robotics. "Flexiv", "Rizon", and "RDK" are trademarks of their owner, used here only to describe compatibility. This software is provided "as is"; keep an E-stop within reach and validate every safety profile on your own cell at low speed before any motion.</p>
+  </div>
+</footer>
+
+<script>
+  function copyCode(btn){
+    var t = document.getElementById('code').innerText;
+    navigator.clipboard.writeText(t).then(function(){
+      var o = btn.textContent; btn.textContent = 'copied ✓';
+      setTimeout(function(){ btn.textContent = o; }, 1400);
+    }).catch(function(){ btn.textContent = 'select & copy'; });
+  }
+
+  // docs grid (links go to GitHub so the .md renders nicely)
+  var BASE = "https://github.com/ZihaoLu001/flexiv_control/blob/main/docs/";
+  var DOCS = [
+    ["architecture.md","Architecture","the stack, the two RT tiers, components, boundaries"],
+    ["design_rationale.md","Design rationale","field survey, decisions, critique of a ROS-2-first alternative"],
+    ["action_contract.md","Action contract","the objects, conventions, from_waypoint_array"],
+    ["safety.md","Safety","profiles, the filter, the four shipped profiles, tuning"],
+    ["flexiv_setup.md","Flexiv setup","bringing up a real Rizon, licenses, first-run checklist"],
+    ["versions.md","Versions","RDK version sensitivity and the # VERIFY: markers"],
+    ["integration_planner.md","Planners","receding-horizon: replan loop, real2sim2real, failure signal"],
+    ["integration_mpc.md","MPC","high-rate closed loops, ReactiveServoLoop"],
+    ["integration_rl.md","Reinforcement learning","Gym env, HIL-SERL intervention, sim→real"],
+    ["integration_teleop.md","Teleoperation","SpaceMouse teleop and the MoveIt-Servo bridge"]
+  ];
+  var g = document.getElementById('docgrid');
+  DOCS.forEach(function(d,i){
+    var a = document.createElement('a');
+    a.className='doc'; a.href=BASE+d[0]; a.target='_blank'; a.rel='noopener';
+    a.innerHTML = '<span class="num">'+String(i+1).padStart(2,'0')+'</span><span><h4>'+d[1]+'</h4><p>'+d[2]+'</p></span>';
+    g.appendChild(a);
+  });
+</script>
+</body>
+</html>

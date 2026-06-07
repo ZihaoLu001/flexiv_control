@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>flexiv_control_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    ROS 2 bringup for flexiv_control: a thin bridge node exposing the
+    flexiv_control action contract (Cartesian chunks, state, mode switching,
+    MoveIt-Servo-compatible jogging) over ROS 2. Community project, NOT
+    affiliated with Flexiv Robotics.
+  </description>
+  <maintainer email="you@example.com">Zihao Lu</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>flexiv_control_msgs</exec_depend>
+  <!-- The flexiv_control Python package must be importable in the ROS Python
+       environment (pip install -e . into the same interpreter / venv). -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
