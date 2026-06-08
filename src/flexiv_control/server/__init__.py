@@ -4,6 +4,7 @@ See :mod:`flexiv_control.server.server` for the architecture rationale.
 """
 
 from .control_loop import LoopStats, ReactiveServoLoop  # noqa: F401
+from .host_lock import HostLock, HostLockError  # noqa: F401
 from .lease import Lease, LeaseError, LeaseInfo  # noqa: F401
 from .server import FlexivControlServer  # noqa: F401
 
@@ -12,6 +13,8 @@ __all__ = [
     "Lease",
     "LeaseError",
     "LeaseInfo",
+    "HostLock",
+    "HostLockError",
     "ReactiveServoLoop",
     "LoopStats",
 ]
