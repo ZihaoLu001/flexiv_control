@@ -222,6 +222,10 @@ class MujocoBackend(RobotBackend):
         ctrl = self._grip_scale * float(cmd.width) + self._grip_offset
         lo, hi = m.actuator_ctrlrange[self._grip_act]
         d.ctrl[self._grip_act] = min(max(ctrl, lo), hi) if hi > lo else ctrl
+        # Advance physics so a standalone command_gripper() visibly actuates the
+        # fingers, matching the real backend's immediate Gripper.Move semantics
+        # (otherwise the fingers only move on the next stream_* tick).
+        self._step_n(self._substeps())
 
     # -- safety / motion ----------------------------------------------------
     def stop(self) -> None:

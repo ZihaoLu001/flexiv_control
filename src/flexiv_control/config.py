@@ -108,7 +108,10 @@ class RobotConfig:
     # MuJoCo backend (sim / real2sim2real): path to a Rizon MJCF, the control
     # substep duration, and an optional TCP site name.
     model_path: Optional[str] = None
-    control_dt: float = 0.02
+    # MuJoCo control substep duration. None = match the control rate (1/control_hz)
+    # so a chunk plays back at the SAME speed in sim as the loop streams it; the
+    # old fixed 0.02 s decoupled sim time from control_hz (chunks ran too fast/slow).
+    control_dt: Optional[float] = None
     mujoco_tcp_site: Optional[str] = None
     mujoco_gripper_actuator: Optional[str] = None
     mujoco_gripper_width_scale: float = 1.0
@@ -129,7 +132,8 @@ class RobotConfig:
         if "q_home" in d:
             c.q_home = np.asarray(d["q_home"], float)
         c.model_path = d.get("model_path", c.model_path)
-        c.control_dt = float(d.get("control_dt", c.control_dt))
+        if "control_dt" in d:
+            c.control_dt = float(d["control_dt"])
         c.mujoco_tcp_site = d.get("mujoco_tcp_site", c.mujoco_tcp_site)
         c.mujoco_gripper_actuator = d.get("mujoco_gripper_actuator", c.mujoco_gripper_actuator)
         c.mujoco_gripper_width_scale = float(

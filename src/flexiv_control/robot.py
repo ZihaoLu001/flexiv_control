@@ -81,7 +81,9 @@ class Robot:
             return dict(
                 model_path=self.cfg.model_path,
                 n_joints=self.cfg.n_joints,
-                control_dt=self.cfg.control_dt,
+                # Default the sim substep to the control period so a chunk plays
+                # back at the same speed it is streamed; honour an explicit override.
+                control_dt=self.cfg.control_dt if self.cfg.control_dt is not None else self.dt,
                 tcp_site=self.cfg.mujoco_tcp_site,
                 gripper_actuator=self.cfg.mujoco_gripper_actuator,
                 gripper_width_scale=self.cfg.mujoco_gripper_width_scale,
