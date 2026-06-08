@@ -1,12 +1,15 @@
-"""Networked policy-server client -- the openpi / VLA inference seam, realized.
+"""Networked chunk-policy client -- the receding-horizon policy seam over HTTP.
 
-A :class:`RemotePolicyClient` turns a remote policy / inference server into a
+A :class:`RemotePolicyClient` turns a remote inference server into a
 ``policy(obs) -> CartesianChunk | None`` callable for
 :class:`~flexiv_control.RecedingHorizonRunner`: it serializes the observation,
-POSTs it as JSON, and parses the returned action chunk. This is the controller
-side of the openpi pattern (a policy server returns an action chunk from an
-observation) -- point it at your own inference server (an openpi / OpenVLA /
-diffusion-policy endpoint, or an MPC solver exposed over HTTP).
+POSTs it as JSON, and parses the returned action chunk. This realizes the same
+*pattern* openpi/pi0 use (a policy server returns an action chunk from an
+observation) -- but over **flexiv_control's own JSON protocol below, NOT the
+openpi/pi0 (msgpack/websocket) wire format**. Point it at your own inference
+server: a thin shim wrapping an openpi / OpenVLA / diffusion-policy model, or an
+MPC solver exposed over HTTP. To talk to a stock openpi server, adapt this
+client's encode/decode to that server's wire format.
 
 Protocol (JSON over HTTP POST)::
 
@@ -17,6 +20,10 @@ The observation and chunk use the same wire format as the control server
 (:func:`flexiv_control.server.protocol.state_to_dict` /
 :func:`~flexiv_control.server.protocol.chunk_to_dict`), so a server can build a
 chunk with ``CartesianChunk(...)`` and serialize it with the shipped helpers.
+
+Note: the observation here is proprioceptive (:class:`RobotState`); image
+observations are not carried yet -- a vision policy server would need camera
+frames added to this request.
 """
 
 from __future__ import annotations

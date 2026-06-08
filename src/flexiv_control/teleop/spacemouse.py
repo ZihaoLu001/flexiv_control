@@ -136,7 +136,8 @@ class SpaceMouseTeleop:
 
     # -- mapping -------------------------------------------------------------
     def to_delta(self, st: SpaceMouseState) -> np.ndarray:
-        """SpaceMouse state -> per-tick Cartesian delta ``[dx..dyaw]`` (metres/rad)."""
+        """SpaceMouse state -> per-tick Cartesian delta ``[dx..drz]`` (metres/rad;
+        the rotation triplet is an axis-angle rotation vector, not Euler)."""
         trans = self._apply_deadband(st.translation)
         rot = self._apply_deadband(st.rotation)
         delta = np.empty(6)
@@ -170,7 +171,7 @@ class SpaceMouseTeleop:
         """Override ``policy_action`` when the operator is actively moving the device.
 
         Returns ``(action, intervened)``. ``action`` is a 7-vector in ``[-1, 1]``
-        (``[dx,dy,dz,droll,dpitch,dyaw,gripper]``) suitable for
+        (``[dx,dy,dz,drx,dry,drz,gripper]``; rotation = axis-angle rotvec) suitable for
         :class:`~flexiv_control.envs.FlexivRealEnv`; ``intervened`` flags whether
         the human took over (so the RL loop can label the transition).
         """

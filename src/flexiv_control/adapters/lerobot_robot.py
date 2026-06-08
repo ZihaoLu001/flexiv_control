@@ -78,7 +78,10 @@ class LeRobotFlexivAdapter:
         + [f"wrench.{i}" for i in range(6)]
         + ["gripper_width"]
     )
-    _ACTION_KEYS = ("dx", "dy", "dz", "droll", "dpitch", "dyaw", "gripper")
+    # Rotation deltas are an AXIS-ANGLE rotation vector (consumed as a rotvec by
+    # servo_cartesian_delta), NOT Euler roll/pitch/yaw -- name them honestly so
+    # the recorded LeRobot action features can't be misread as Euler angles.
+    _ACTION_KEYS = ("dx", "dy", "dz", "drx", "dry", "drz", "gripper")
 
     @property
     def observation_features(self) -> Dict[str, type]:
@@ -163,8 +166,7 @@ class LeRobotFlexivAdapter:
         delta = np.empty(6)
         delta[:3] = a[:3] * self.pos_scale
         delta[3:] = a[3:6] * self.rot_scale
-        width = float(np.clip((a[6] + 1.0) / 2.0, 0.0, 1.0)) * self.gripper_open_width
-        grip = GripperCommand(width=width, force=20.0, grasp=a[6] < 0)
+        grip = GripperCommand.from_signed_action(a[6], span=self.gripper_open_width, force=20.0)
         self.robot.servo_cartesian_delta(delta, duration=self.step_duration, gripper=grip)
         return {k: float(v) for k, v in zip(self._ACTION_KEYS, a)}
 

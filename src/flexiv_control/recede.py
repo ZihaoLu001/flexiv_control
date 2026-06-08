@@ -57,9 +57,12 @@ class RecedingHorizonRunner:
         return steps
 
     def run_streaming(self, loop, *, replan_hz: float = 5.0) -> int:
-        """Infer-ahead loop over a :class:`ReactiveServoLoop`: enqueue the next
-        chunk while the loop streams the current one (real-time chunking). The
-        loop is the single writer and holds-on-stale if the policy stalls.
+        """Async infer-ahead loop over a :class:`ReactiveServoLoop`: enqueue the
+        next chunk while the loop streams the current one. The loop is the single
+        writer and holds-on-stale if the policy stalls. Note this is infer-ahead,
+        not true real-time chunking (RTC): a newly enqueued chunk PREEMPTS the
+        current one at the next tick (a hard swap), it is not velocity-blended
+        across the boundary.
 
         ``loop`` must already be started. Returns the number of chunks enqueued.
         """
