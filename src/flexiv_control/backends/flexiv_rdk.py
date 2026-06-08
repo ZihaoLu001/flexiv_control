@@ -73,6 +73,17 @@ def _get(obj: Any, *names: str, default=None):
     return default
 
 
+def _rdk_coord(frame: str):
+    """Map a frame name to ``flexivrdk.CoordType``.
+
+    RDK's ``SetForceControlFrame`` takes a ``CoordType`` enum (``WORLD``/``TCP``),
+    *not* a string. "tcp"/"flange"/"ee" -> TCP; everything else ("base"/"world")
+    -> WORLD. Confirmed against RDK v1.x ``robot.hpp``.
+    """
+    C = flexivrdk.CoordType
+    return C.TCP if str(frame).lower() in ("tcp", "flange", "ee") else C.WORLD
+
+
 class FlexivRdkBackend(RobotBackend):
     def __init__(
         self,
@@ -188,7 +199,8 @@ class FlexivRdkBackend(RobotBackend):
             self._robot.SetMaxContactWrench(list(np.asarray(max_contact_wrench, float)))
         if force_control is not None and mode.is_cartesian:
             self._robot.SetForceControlAxis(list(map(bool, force_control.enabled_axes)))
-            self._robot.SetForceControlFrame(force_control.frame)  # VERIFY frame arg
+            # SetForceControlFrame takes a CoordType enum, not a string. (RDK v1.x)
+            self._robot.SetForceControlFrame(_rdk_coord(force_control.frame))
         if nullspace_q is not None and mode.is_cartesian:
             self._robot.SetNullSpacePosture(list(np.asarray(nullspace_q, float)))
 
@@ -206,12 +218,15 @@ class FlexivRdkBackend(RobotBackend):
         q = list(np.asarray(q, float))
         zeros = [0.0] * self.n_joints
         if self._mode.is_realtime:
-            self._robot.StreamJointPosition(q, zeros, zeros)  # VERIFY signature
+            # RT: StreamJointPosition(positions, velocities, accelerations). (RDK v1.x)
+            self._robot.StreamJointPosition(q, zeros, zeros)
         else:
-            # NRT joint position with conservative vel/acc caps. VERIFY signature.
+            # NRT: SendJointPosition(positions, velocities, max_vel, max_acc) -- the
+            # 3rd/4th args are trajectory *limits*, not a target acceleration. The
+            # earlier 5-arg form (extra acc vector) is wrong for RDK v1.x.
             max_vel = [1.0] * self.n_joints
             max_acc = [1.0] * self.n_joints
-            self._robot.SendJointPosition(q, zeros, zeros, max_vel, max_acc)
+            self._robot.SendJointPosition(q, zeros, max_vel, max_acc)
 
     # -- gripper ------------------------------------------------------------
     def move_gripper(self, cmd: GripperCommand) -> None:
@@ -230,9 +245,27 @@ class FlexivRdkBackend(RobotBackend):
     def home(self, q_home: Optional[np.ndarray] = None) -> None:
         """Home via the NRT 'Home' primitive (robot-internal, safe)."""
         self._robot.SwitchMode(_rdk_mode(ControlMode.NRT_PRIMITIVE))
-        self._robot.ExecutePrimitive("Home", {})  # VERIFY primitive name + params
-        # Block until the primitive reports done. VERIFY busy()/primitive_states().
+        # ExecutePrimitive(name, input_params, block_until_started=True). (RDK v1.x)
+        self._robot.ExecutePrimitive("Home", dict())
+        # Block until the primitive reports completion. RDK v1.x exposes
+        # primitive_states() as a dict; "reachedTarget" flips to "1" when done.
+        # Fall back to busy() if that key is absent on this RDK version.
         t0 = time.time()
-        while _get(self._robot, "busy", default=lambda: False)() and time.time() - t0 < 30:
+        while time.time() - t0 < 30.0:
+            if not self._primitive_running():
+                break
             time.sleep(0.05)
         self._mode = ControlMode.NRT_PRIMITIVE
+
+    def _primitive_running(self) -> bool:
+        """True while an NRT primitive is still executing (best-effort, cross-version)."""
+        try:
+            ps = self._robot.primitive_states()
+            if isinstance(ps, dict) and "reachedTarget" in ps:
+                return str(ps["reachedTarget"]).strip().lower() not in ("1", "true")
+        except Exception:
+            pass
+        try:
+            return bool(self._robot.busy())
+        except Exception:
+            return False
