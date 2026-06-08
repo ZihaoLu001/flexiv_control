@@ -74,7 +74,7 @@ See [design_rationale.md](design_rationale.md) for why this beats a
 | Backends | `backends/` | `RobotBackend` ABC; `FakeBackend` (dependency-free sim), `FlexivRdkBackend` (real), `MujocoBackend` (stub for real2sim2real). `get_backend(name)`. |
 | Server | `server/` | `FlexivControlServer`: one owner of the backend, a `Lease` (single writer, TTL + heartbeat), newline-JSON over TCP. `ReactiveServoLoop` is the always-on single-writer setpoint loop. |
 | Client | `client/` | `RemoteRobot`: mirrors the `Robot` API over the wire, with lease heartbeat. Lets an RL/MPC author on another machine drive the arm with a `pip install` and no ROS. |
-| Gym env | `envs/gym_env.py` | `FlexivRealEnv` (Gymnasium): 7-dim `[dx,dy,dz,droll,dpitch,dyaw,gripper]` action, 28-dim observation. Works against a local `Robot` or a `RemoteRobot`. |
+| Gym env | `envs/gym_env.py` | `FlexivRealEnv` (Gymnasium): 7-dim `[dx,dy,dz,drx,dry,drz,gripper]` action (rotation = axis-angle rotvec), 28-dim observation. Works against a local `Robot` or a `RemoteRobot`. |
 | LeRobot adapter | `adapters/lerobot_robot.py` | `LeRobotFlexivAdapter` implementing LeRobot's `Robot` interface — the single biggest community lever (free data collection / training / visualization). |
 | Teleop | `teleop/spacemouse.py` | `SpaceMouseTeleop` + sources. The SpaceMouse doubles as teleoperation **and** an RL intervention device (HIL-SERL style). |
 | CLI | `cli.py` | `flexiv-control serve | home | state | demo`. |

@@ -96,7 +96,8 @@ class ReactiveServoLoop:
 
     def enqueue_chunk(self, chunk) -> None:
         """Stage a Cartesian chunk for the loop to interpolate and stream while
-        you compute the next one (async / receding-horizon "real-time chunking").
+        you compute the next one (async infer-ahead, NOT true real-time chunking:
+        chunk boundaries are a hard preemptive swap, not velocity-blended).
 
         A newly enqueued chunk PREEMPTS the current one. Relative chunks are
         resolved against the live pose and sliced to ``horizon_exec`` first; the

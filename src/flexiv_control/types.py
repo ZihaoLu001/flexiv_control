@@ -218,3 +218,26 @@ class GripperCommand:
         """
         o = float(np.clip(opening, 0.0, 1.0))
         return cls(width=min_width + o * span, force=force, velocity=velocity)
+
+    @classmethod
+    def from_signed_action(
+        cls,
+        action: float,
+        *,
+        span: float = 0.08,
+        min_width: float = 0.0,
+        force: float = 20.0,
+        velocity: float = 0.1,
+    ) -> "GripperCommand":
+        """Build from a signed action in ``[-1, 1]`` (the RL/teleop convention):
+        ``+1`` = open, ``-1`` = closed, and a *negative* action also selects grasp
+        (move-until-contact). This is the ``[-1, 1] -> [0, 1]`` mirror of
+        :meth:`from_normalized`, so the delta-action surface and the chunk surface
+        share one gripper encoding instead of each rolling its own remap.
+        """
+        a = float(np.clip(action, -1.0, 1.0))
+        cmd = cls.from_normalized(
+            (a + 1.0) / 2.0, span=span, min_width=min_width, force=force, velocity=velocity
+        )
+        cmd.grasp = a < 0.0
+        return cmd

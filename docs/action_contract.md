@@ -136,7 +136,7 @@ actions, which is what keeps sim→real transfer clean.
 
 ```python
 CartesianDelta(
-    delta,             # length-6 [dx, dy, dz, droll, dpitch, dyaw]
+    delta,             # length-6 [dx, dy, dz, drx, dry, drz] (rotation = axis-angle rotvec)
     gripper=None,
     duration=0.05,     # 20 Hz default control step
     frame="base",
@@ -212,7 +212,7 @@ gets a clean signal for *why* a rollout failed — see
 |---|---|---|
 | Receding-horizon planner | `CartesianChunk.from_waypoint_array(u)` | execute first segment → replan |
 | MPC loop | `CartesianDelta` per tick, or first slice of a horizon as a `CartesianChunk` | [integration_mpc.md](integration_mpc.md) |
-| RL policy | `[dx,dy,dz,droll,dpitch,dyaw,gripper]` → `CartesianDelta` (via `FlexivRealEnv`) | [integration_rl.md](integration_rl.md) |
+| RL policy | `[dx,dy,dz,drx,dry,drz,gripper]` → `CartesianDelta` (via `FlexivRealEnv`) | [integration_rl.md](integration_rl.md) |
 | SpaceMouse teleop / RL intervention | `CartesianDelta` per tick | [integration_teleop.md](integration_teleop.md) |
 | Reset / home / MoveIt plan | `JointChunk` | `Robot.move_joint` / `execute_joint_chunk` |
 

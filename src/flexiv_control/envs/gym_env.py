@@ -2,8 +2,9 @@
 
 The single most important thing for sim-to-real RL is that the *same action
 contract* drives sim and real. This env exposes the standard low-dim Cartesian
-action used by robosuite/SERL/LeRobot -- ``[dx, dy, dz, droll, dpitch, dyaw,
-gripper]`` in ``[-1, 1]`` -- and maps it through the same safety filter,
+action used by robosuite/SERL/LeRobot -- ``[dx, dy, dz, drx, dry, drz,
+gripper]`` in ``[-1, 1]`` (the rotation triplet is an axis-angle rotation
+vector, not Euler roll/pitch/yaw) -- and maps it through the same safety filter,
 interpolation, and backend as everything else. Point it at the ``fake`` backend
 to develop offline, the ``mujoco`` backend for sim, or a real Rizon (directly or
 via :class:`~flexiv_control.RemoteRobot`) with **no change to the policy**.
@@ -107,7 +108,8 @@ class FlexivRealEnv(_EnvBase):
         self._connected = False
         self._elapsed = 0
 
-        # action: [dx, dy, dz, droll, dpitch, dyaw, gripper] in [-1, 1]
+        # action: [dx, dy, dz, drx, dry, drz, gripper] in [-1, 1]
+        # (drx/dry/drz = axis-angle rotation-vector delta, not Euler)
         self.action_space = spaces.Box(-1.0, 1.0, shape=(7,), dtype=np.float32)
         # observation: [q(7), dq(7), tcp_pose(7), wrench(6), gripper_width(1)]
         self._obs_dim = 7 + 7 + 7 + 6 + 1
@@ -140,9 +142,10 @@ class FlexivRealEnv(_EnvBase):
         delta = np.empty(6)
         delta[:3] = a[:3] * self.pos_scale
         delta[3:] = a[3:6] * self.rot_scale
-        # gripper: map [-1,1] -> [0, open_width], <0 closes
-        width = float(np.clip((a[6] + 1.0) / 2.0, 0.0, 1.0)) * self.gripper_open_width
-        grip = GripperCommand(width=width, force=self.gripper_force, grasp=a[6] < 0)
+        # gripper: shared [-1,1] encoding (+1 open, -1 closed + grasp).
+        grip = GripperCommand.from_signed_action(
+            a[6], span=self.gripper_open_width, force=self.gripper_force
+        )
         return delta, grip
 
     # -- gym API -------------------------------------------------------------

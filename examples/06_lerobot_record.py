@@ -16,7 +16,7 @@ surface and a minimal record loop. If ``lerobot`` is not installed it falls back
 to printing the frames it *would* log, so it still runs on the fake backend.
 
     observation_features: q.0..6, dq.0..6, tcp_pose.0..6, wrench.0..5, gripper_width
-    action_features:      dx, dy, dz, droll, dpitch, dyaw, gripper
+    action_features:      dx, dy, dz, drx, dry, drz, gripper  (rotation = axis-angle rotvec)
     (LeRobot aggregates these flat float keys into observation.state / action.)
 
 NOTE: build the LeRobotDataset with YOUR installed lerobot's dataset API; its
@@ -43,7 +43,7 @@ def main() -> None:
         for t in range(10):
             obs = adapter.get_observation()
             # A real script would call your policy here. The action is a single
-            # 7-vector [dx, dy, dz, droll, dpitch, dyaw, gripper] in [-1, 1];
+            # 7-vector [dx, dy, dz, drx, dry, drz, gripper] in [-1, 1];
             # here we send a small +x nudge with the gripper open.
             action = np.array([0.3, 0, 0, 0, 0, 0, 1.0], dtype=np.float32)
             adapter.send_action(action)

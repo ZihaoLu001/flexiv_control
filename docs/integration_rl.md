@@ -35,7 +35,7 @@ env.close()
 Spaces:
 
 ```
-action      = [dx, dy, dz, droll, dpitch, dyaw, gripper]   in [-1, 1]   (shape (7,))
+action      = [dx, dy, dz, drx, dry, drz, gripper]   in [-1, 1]   (shape (7,); rotation = axis-angle rotvec)
 observation = [q(7), dq(7), tcp_pose(7), wrench(6), gripper_width(1)]   (28-dim)
 ```
 

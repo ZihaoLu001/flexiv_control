@@ -6,7 +6,7 @@ or imitation-learning code (SERL/HIL-SERL, LeRobot, stable-baselines3, your own
 actor-learner) can drive the robot through the same safe, leased control path
 the rest of the stack uses.
 
-    action:      [dx, dy, dz, droll, dpitch, dyaw, gripper] in [-1, 1]
+    action:      [dx, dy, dz, drx, dry, drz, gripper] in [-1, 1]  (rotation = axis-angle rotvec)
     observation: [q(7), dq(7), tcp_pose(7), wrench(6), gripper_width(1)]  -> 28
 
 This example runs a random policy on the fake backend, then shows the SERL/
