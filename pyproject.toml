@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flexiv-control"
-version = "0.1.0"
+# Single-sourced from flexiv_control.__version__ (see [tool.setuptools.dynamic])
+# so the version is defined in exactly one place.
+dynamic = ["version"]
 description = "A unified, real-time execution & safety layer for Flexiv Rizon arms: one action contract for teleop, MPC, RL, and real2sim2real."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -28,6 +30,7 @@ dependencies = ["numpy>=1.20"]
 [project.urls]
 Homepage = "https://github.com/ZihaoLu001/flexiv_control"
 Repository = "https://github.com/ZihaoLu001/flexiv_control"
+Changelog = "https://github.com/ZihaoLu001/flexiv_control/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Real Flexiv hardware. Pinned to RDK v1.x: the backend targets v1.x (robot
@@ -52,13 +55,18 @@ flexiv-control = "flexiv_control.cli:main"
 [tool.setuptools]
 package-dir = { "" = "src" }
 
+[tool.setuptools.dynamic]
+version = { attr = "flexiv_control.__version__" }
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 # The YAML config templates live inside the package (src/flexiv_control/configs/)
 # so they ship in the wheel; config.py resolves profile names against that dir.
+# py.typed marks the package as typed (PEP 561) so downstream type-checkers read
+# the inline annotations.
 [tool.setuptools.package-data]
-flexiv_control = ["configs/**/*.yaml", "sim/*.xml"]
+flexiv_control = ["configs/**/*.yaml", "sim/*.xml", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
