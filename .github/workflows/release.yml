@@ -39,6 +39,12 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    # Bind to a GitHub Environment so PyPI publishing can be gated. Enable
+    # "Required reviewers" on the `pypi` environment in repo Settings ->
+    # Environments to require a human approval before each release is published.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/flexiv-control
     # Trusted Publishing needs id-token write; harmless if a token is used instead.
     permissions:
       id-token: write
