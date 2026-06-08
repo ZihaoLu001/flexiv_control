@@ -33,6 +33,7 @@ from ..types import (
     JointImpedanceParams,
     RobotState,
     SafetyStatus,
+    StopReason,
 )
 from .base import RobotBackend
 
@@ -132,6 +133,9 @@ class FlexivRdkBackend(RobotBackend):
         self._gripper = None
         self._mode = ControlMode.IDLE
         self._connected = False
+        # The active Cartesian force-control params, kept so stream_cartesian can
+        # actually command the configured target_wrench (not just a zero default).
+        self._force_control: Optional[ForceControlParams] = None
 
     # -- lifecycle ----------------------------------------------------------
     def connect(self) -> None:
@@ -139,9 +143,14 @@ class FlexivRdkBackend(RobotBackend):
         self._robot = flexivrdk.Robot(self.robot_sn)  # VERIFY: ctor signature
 
         # Clear any minor fault, then enable + wait until operational.
-        if _get(self._robot, "fault", default=None) and callable(self._robot.fault):
-            if self._robot.fault():
-                self._robot.ClearFault()  # VERIFY
+        fault_fn = _get(self._robot, "fault", default=None)
+        if callable(fault_fn) and fault_fn():
+            ok = self._robot.ClearFault()  # VERIFY: v1.x returns bool, older None
+            if ok is False:
+                raise RuntimeError(
+                    "could not clear robot fault -- check the pendant; an engaged "
+                    "E-stop or active fault must be cleared before Enable()."
+                )
         self._robot.Enable()
         t0 = time.time()
         while not self._robot.operational():  # VERIFY: operational() vs Operational
@@ -149,12 +158,43 @@ class FlexivRdkBackend(RobotBackend):
                 raise TimeoutError("robot did not become operational within 10 s")
             time.sleep(0.05)
 
+        # Adopt the true DoF from the robot rather than trusting the constructor
+        # default, and assert any explicit n_joints matches (a mismatch would
+        # silently mis-size every command/state vector).
+        try:
+            qv = _get(self._robot.states(), "q", default=None)
+            n = len(list(qv)) if qv is not None else 0
+            if n:
+                if self.n_joints and self.n_joints != n:
+                    raise ValueError(
+                        f"configured n_joints={self.n_joints} but the robot reports "
+                        f"{n} joints; fix the config."
+                    )
+                self.n_joints = n
+        except ValueError:
+            raise
+        except Exception:
+            pass
+
         if self._gripper_name is not None:
             self._gripper = flexivrdk.Gripper(self._robot)  # VERIFY
+            # RDK v1.x: Gripper.Init() (blocking, no args). Older APIs used
+            # Enable(name). Try the v1.x form first, fall back, and SURFACE a
+            # failure (a warning) instead of silently swallowing it.
             try:
-                self._gripper.Enable(self._gripper_name)  # VERIFY: Enable/Init name
-            except Exception:
-                pass
+                if hasattr(self._gripper, "Init"):
+                    self._gripper.Init()
+                elif hasattr(self._gripper, "Enable"):
+                    self._gripper.Enable(self._gripper_name)
+            except Exception as e:  # pragma: no cover - hardware-only path
+                import warnings
+
+                warnings.warn(
+                    f"gripper init failed ({e}); gripper commands will be no-ops.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self._gripper = None
         self._connected = True
 
     def disconnect(self) -> None:
@@ -189,18 +229,36 @@ class FlexivRdkBackend(RobotBackend):
                 gs = self._gripper.states()  # VERIFY
                 gw = float(_get(gs, "width", default=0.0))
                 gf = float(_get(gs, "force", default=0.0))
-                gm = bool(_get(gs, "is_moving", "isMoving", default=False))
+                # v1.x exposes motion via the Gripper.moving() METHOD, not a
+                # states() field (GripperStates has no is_moving in v1.x, so the
+                # old field read silently always returned False).
+                if hasattr(self._gripper, "moving"):
+                    gm = bool(self._gripper.moving())
+                else:
+                    gm = bool(_get(gs, "is_moving", "isMoving", default=False))
             except Exception:
                 pass
 
+        # Surface a robot-side fault through the state so the control loop (and
+        # any client polling get_state) sees it -- previously hardcoded OK.
+        faulted = self.in_fault()
         return RobotState(
             stamp=time.time(),
             q=q, dq=dq, tau=tau,
             tcp_pose=tcp_pose, tcp_vel=tcp_vel, wrench=wrench,
             gripper_width=gw, gripper_force=gf, gripper_is_moving=gm,
             control_mode=self._mode,
-            safety_status=SafetyStatus.OK,
+            safety_status=SafetyStatus.FAULT if faulted else SafetyStatus.OK,
+            stop_reason=StopReason.BACKEND_FAULT if faulted else StopReason.NONE,
         )
+
+    def in_fault(self) -> bool:
+        """True if the robot reports a fault / protective stop (RDK ``fault()``)."""
+        fault_fn = _get(self._robot, "fault", default=None)
+        try:
+            return bool(fault_fn()) if callable(fault_fn) else False
+        except Exception:
+            return False
 
     # -- mode ---------------------------------------------------------------
     def set_mode(
@@ -235,9 +293,12 @@ class FlexivRdkBackend(RobotBackend):
         if max_contact_wrench is not None and mode.is_cartesian:
             self._robot.SetMaxContactWrench(list(np.asarray(max_contact_wrench, float)))
         if force_control is not None and mode.is_cartesian:
+            self._force_control = force_control
             self._robot.SetForceControlAxis(list(map(bool, force_control.enabled_axes)))
             # SetForceControlFrame takes a CoordType enum, not a string. (RDK v1.x)
             self._robot.SetForceControlFrame(_rdk_coord(force_control.frame))
+        elif not mode.is_cartesian:
+            self._force_control = None  # force control is scoped to Cartesian modes
         if nullspace_q is not None and mode.is_cartesian:
             self._robot.SetNullSpacePosture(list(np.asarray(nullspace_q, float)))
 
@@ -247,8 +308,16 @@ class FlexivRdkBackend(RobotBackend):
         # RDK v1.x Stream/SendCartesianMotionForce take wrench[6] as the 2nd arg;
         # it only acts on axes enabled via SetForceControlAxis, so a zero default
         # is safe for pure-motion ticks. Dropping it (pose-only) silently disabled
-        # force control during chunk execution.
-        wr = list(np.asarray(wrench, float).reshape(CART_DOF)) if wrench is not None else [0.0] * CART_DOF
+        # force control during chunk execution. Precedence: an explicit per-tick
+        # wrench wins; otherwise command the active mode's configured
+        # target_wrench (so ForceControlParams.target_wrench is actually applied);
+        # otherwise zero.
+        if wrench is not None:
+            wr = list(np.asarray(wrench, float).reshape(CART_DOF))
+        elif self._force_control is not None:
+            wr = list(np.asarray(self._force_control.target_wrench, float).reshape(CART_DOF))
+        else:
+            wr = [0.0] * CART_DOF
         if self._mode.is_realtime:
             # RT: 1 kHz streaming, robot tracks immediately.
             self._robot.StreamCartesianMotionForce(pose, wr)

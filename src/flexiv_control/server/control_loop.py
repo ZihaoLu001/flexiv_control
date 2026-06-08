@@ -206,6 +206,13 @@ class ReactiveServoLoop:
 
             self._stats.command_age_ms = age * 1000.0
 
+            # Robot-side fault gate, checked EVERY tick. A collision reflex /
+            # protective stop / E-stop on the robot is invisible to the host-side
+            # safety filter (which only checks geometry against the commanded
+            # setpoint), so if the backend reports a fault we must stop streaming
+            # immediately rather than keep issuing setpoints into a faulted arm.
+            faulted = self.backend.in_fault()
+
             # Read the watchdog from the LIVE profile each tick so a mid-run
             # set_safety_profile() swap applies both the timeout and the flag
             # consistently (they used to diverge: flag live, timeout cached).
@@ -215,7 +222,11 @@ class ReactiveServoLoop:
             with self._wlock:
                 p = self.filter.p
                 stale = age > (p.command_timeout_ms / 1000.0)
-                if stale and p.stop_on_stale_command:
+                if faulted:
+                    self.backend.stop()
+                    self._stats.last_status = SafetyStatus.FAULT
+                    self._stats.last_stop_reason = StopReason.BACKEND_FAULT
+                elif stale and p.stop_on_stale_command:
                     # Hold position: re-issue the *current measured* pose, don't
                     # keep tracking an old setpoint. Re-anchor the filter so the
                     # next live command is referenced to where we actually are.
