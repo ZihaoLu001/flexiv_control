@@ -1,0 +1,28 @@
+# ActAhead lab safety profile -- transcribed from the real cell limits in
+# ActAhead config/workspace.yaml (the conservative push-task envelope).
+# Validate on your own cell at low speed before trusting these defaults.
+name: actahead_lab
+
+workspace:
+  # Planner/controller TCP box in the robot base frame (metres).
+  x: [0.25, 0.85]
+  y: [-0.35, 0.35]
+  z: [0.055, 0.70]          # 0.055 = the lab ee_z_push floor
+
+tcp_limits:
+  max_linear_speed: 0.05    # lab push speed (m/s) -- deliberately slow
+  max_angular_speed: 0.20   # rad/s
+  max_pose_jump_linear: 0.02
+  max_pose_jump_angular: 0.10
+
+joint_limits:
+  margin_rad: 0.08
+  max_joint_speed_scale: 0.20
+
+contact:
+  max_wrench: [40, 40, 40, 5, 5, 5]
+
+watchdog:
+  command_timeout_ms: 200.0   # = ActAhead stop_if_tcp_stale_s (0.20 s)
+  state_timeout_ms: 20.0
+  stop_on_stale_command: true

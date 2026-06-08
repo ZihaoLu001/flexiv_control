@@ -1,0 +1,25 @@
+# ActAhead lab Rizon4s -- derived from the real cell
+# (ActAhead config/robot/lab_flexiv_gn01.relative.yaml + config/workspace.yaml).
+# Switch `backend` to flexiv_rdk for the real arm or mujoco for sim2real.
+robot_id: rizon4s_actahead_lab
+backend: fake
+robot_sn: "Rizon4s-062626"
+# GN01 gripper: set to the device name your Flexiv RDK / Elements reports for it.
+gripper_name: ""
+n_joints: 7
+control_hz: 100.0
+default_safety_profile: actahead_lab
+# Restore/initial pose used in the lab (from the calibrated initial_joint_goal).
+q_home: [-0.001, -0.700, -0.002, 1.573, 0.005, 0.689, -0.003]
+
+# --- MuJoCo sim (real2sim2real) -------------------------------------------
+# ActAhead renders with the official DeepMind menagerie model
+# mujoco_menagerie/flexiv_rizon4/scene.xml. Set model_path to its absolute path
+# (e.g. <ActAhead>/third_party/mujoco_menagerie/flexiv_rizon4/scene.xml), or
+# point FLEXIV_CONTROL_CONFIGS / model_path at a GN01-inclusive MJCF.
+model_path: ""
+control_dt: 0.02
+# The arm-only menagerie model has no flange/gripper; the lab GN01 flange mount
+# (link7 -> flange) is xyz [0, 0, 0.124], rpy [0, 0, -pi]. For exact GN01 contact
+# geometry use a gripper-inclusive MJCF and set mujoco_tcp_site to its TCP site.
+mujoco_tcp_site: ""
