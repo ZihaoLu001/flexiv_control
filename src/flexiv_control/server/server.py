@@ -39,6 +39,7 @@ from ..config import RobotConfig
 from ..robot import Robot
 from ..types import GripperCommand, ImpedanceParams
 from . import protocol as P
+from .host_lock import HostLock
 from .lease import Lease, LeaseError
 
 
@@ -50,17 +51,28 @@ class FlexivControlServer:
         host: str = "0.0.0.0",
         port: int = P.DEFAULT_PORT,
         lease_ttl: float = 2.0,
+        host_lock: bool = True,
     ):
         self.robot = robot or Robot(config or RobotConfig())
         self.host = host
         self.port = port
         self.lease = Lease(ttl_seconds=lease_ttl)
+        # Host-wide single-owner lock (across OS processes), in addition to the
+        # in-process client Lease. None to disable (e.g. tests / multi-arm hosts).
+        self._host_lock = (
+            HostLock(self.robot.cfg.robot_id, owner="server") if host_lock else None
+        )
         self._robot_lock = threading.Lock()
         self._tcp: Optional[socketserver.ThreadingTCPServer] = None
         self._handlers: Dict[str, Callable[[dict], Any]] = self._build_handlers()
 
     # -- lifecycle -----------------------------------------------------------
     def start(self) -> None:
+        # Host-wide arbitration: refuse to start if another *live* process holds
+        # this robot (a second server, or a direct script). Reclaimed automatically
+        # if the previous holder crashed (its PID is dead).
+        if self._host_lock is not None:
+            self._host_lock.acquire()
         self.robot.connect()
         server = self
         # Seed lease auto-acquire off (server is the source of truth).
@@ -118,6 +130,8 @@ class FlexivControlServer:
             self.robot.stop()
         finally:
             self.robot.disconnect()
+            if self._host_lock is not None:
+                self._host_lock.release()
 
     # -- dispatch ------------------------------------------------------------
     def _dispatch(self, req: dict) -> dict:
