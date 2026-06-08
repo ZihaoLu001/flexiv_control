@@ -17,6 +17,7 @@ from flexiv_control import (
     RemotePolicyClient,
     Robot,
     RobotConfig,
+    SafetyStatus,
 )
 from flexiv_control.client import RemoteRobot
 from flexiv_control.client.remote_robot import RemoteRobotError
@@ -33,24 +34,35 @@ def test_server_side_servo_loop_streams_holds_and_blocks():
         rr.connect()
         rr.acquire_lease("t")
         rr.start_cartesian_impedance()
-        s0 = rr.get_state()
 
         rr.start_servo_loop(control_hz=200.0)
+        s0 = rr.get_state()
+        # Stream an UNREACHED, in-workspace target (x: 0.45 -> 0.65; box is
+        # 0.25..0.75) only briefly, so the arm is still well short of it (the
+        # filter caps each tick to max_linear_speed*dt) when we stop streaming.
         tgt = s0.tcp_pose.copy()
-        tgt[0] += 0.04
-        for _ in range(25):  # stream the target fire-and-forget
+        tgt[0] += 0.20
+        for _ in range(3):  # fire-and-forget; the loop is the single writer
             rr.servo_stream(tgt)
-            time.sleep(0.03)
-        moved = rr.get_state()
-        assert moved.tcp_pose[0] - s0.tcp_pose[0] > 0.02  # the loop drove the arm
+            time.sleep(0.02)
+        assert rr.get_state().tcp_pose[0] - s0.tcp_pose[0] > 0.003  # the loop drove the arm
 
-        # stop streaming -> the loop HOLDS (watchdog), no drift
-        held = rr.get_state().tcp_pose.copy()
+        # Stop streaming. Past command_timeout_ms (100 ms for tabletop_safe) the
+        # watchdog must HOLD -- re-issue the measured pose, NOT keep tracking the
+        # stale target toward `tgt`. SafetyStatus.HOLDING is set ONLY in that
+        # stale branch, so this cannot pass if hold-on-stale regresses (unlike a
+        # drift check against an already-reached target, which false-greens).
         time.sleep(0.4)
-        assert np.linalg.norm(rr.get_state().tcp_pose[:3] - held[:3]) < 0.01
+        p1 = rr.get_state()
+        assert p1.safety_status == SafetyStatus.HOLDING
+        time.sleep(0.25)
+        p2 = rr.get_state()
+        assert np.linalg.norm(p2.tcp_pose[:3] - p1.tcp_pose[:3]) < 0.005  # steady hold
+        assert tgt[0] - p2.tcp_pose[0] > 0.02  # held well short of the unreached target
 
-        # blocking motion RPCs are rejected while the single-writer loop owns the arm
-        with pytest.raises(RemoteRobotError):
+        # blocking motion RPCs are rejected by the single-writer guard specifically
+        # (match the message so an unrelated failure can't keep this green).
+        with pytest.raises(RemoteRobotError, match="servo loop active"):
             rr.execute_cartesian_chunk(
                 CartesianChunk.from_waypoint_array([[0.5, 0.0, 0.30, 1.0, 20]])
             )
@@ -62,6 +74,47 @@ def test_server_side_servo_loop_streams_holds_and_blocks():
             CartesianChunk.from_waypoint_array([[p[0], p[1], p[2], 1.0, 10]],
                                                safety_profile="free_space_fast")
         )
+        rr.disconnect()
+    finally:
+        srv.shutdown()
+
+
+def test_servo_loop_blocks_every_backend_writer():
+    """The single-writer invariant covers ALL backend writers -- not just the
+    obvious motion RPCs but mode switches and gripper commands, which would
+    otherwise switch the arm's mode or drive the gripper underneath the loop."""
+    srv = FlexivControlServer(config=RobotConfig(backend="fake"), port=8813, lease_ttl=10.0)
+    srv.serve_in_thread()
+    time.sleep(0.3)
+    try:
+        rr = RemoteRobot("127.0.0.1", 8813, owner="t")
+        rr.connect()
+        rr.acquire_lease("t")
+        rr.start_cartesian_impedance()
+        rr.start_servo_loop(control_hz=200.0)
+
+        # Every backend writer is refused while the loop owns the arm -- including
+        # the mode switches and gripper command the first cut of _LOOP_BLOCKED missed.
+        from flexiv_control import GripperCommand
+
+        def _blocked(fn):
+            with pytest.raises(RemoteRobotError, match="servo loop active"):
+                fn()
+
+        _blocked(lambda: rr.start_joint_impedance())
+        _blocked(lambda: rr.start_cartesian_impedance())
+        _blocked(lambda: rr.command_gripper(GripperCommand(width=0.02)))
+        _blocked(lambda: rr.move_joint([0.0, -0.7, 0.0, 1.6, 0.0, 0.9, 0.0]))
+        _blocked(lambda: rr.home())
+
+        # ...but a non-writer (read-only) and the streaming verb still work.
+        assert rr.get_state() is not None
+        rr.servo_stream(rr.get_state().tcp_pose)
+
+        # After stopping the loop, those same commands are accepted again.
+        rr.stop_servo_loop()
+        rr.command_gripper(GripperCommand(width=0.02))
+        rr.start_joint_impedance()
         rr.disconnect()
     finally:
         srv.shutdown()
