@@ -141,13 +141,22 @@ class CartesianChunk:
         u = np.asarray(u, float)
         if u.ndim != 2 or u.shape[1] != 5:
             raise ValueError("u must have shape (H, 5): (x, y, z, w, n)")
+        # An (H, 5) array carries no orientation, so every waypoint holds the
+        # previous orientation (quaternion=None). ``hold_orientation`` is accepted
+        # for API symmetry but is necessarily True for this position-only format;
+        # pass full SE(3) ``CartesianWaypoint``s if you need to command orientation.
+        if not hold_orientation:
+            raise ValueError(
+                "from_waypoint_array ingests position-only (H,5) actions and cannot "
+                "set orientation; build CartesianWaypoint(s) with quaternions instead."
+            )
         wpts: List[CartesianWaypoint] = []
         for x, y, z, w, n in u:
             grip = GripperCommand(width=float(np.clip(w, 0, 1)) * 0.08, force=gripper_force)
             wpts.append(
                 CartesianWaypoint(
                     position=[x, y, z],
-                    quaternion=None if hold_orientation else None,
+                    quaternion=None,
                     gripper=grip,
                     n_frames=max(1, int(round(n))),
                 )

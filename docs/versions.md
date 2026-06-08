@@ -8,6 +8,27 @@ firmware**. `flexiv_control` isolates all of that behind one backend file and
 marks every version-sensitive call so you can check it against *your* install
 instead of trusting a hard-coded guess.
 
+## Which RDK generation this targets
+
+The Python backend (`backends/flexiv_rdk.py`) targets **RDK v1.x** (robot
+software v3.x — e.g. lab firmware v3.9 ↔ RDK v1.x). There are **three
+incompatible RDK API generations**, so confirm which one you have before first
+use:
+
+| Generation | Constructor | State read | Command form |
+|---|---|---|---|
+| **v0.x** (legacy) | `Robot(robot_ip, local_ip)` | `getRobotStates(out)`, **camelCase** fields (`tcpPose`, `extWrenchInBase`) | flat `setMode()` |
+| **v1.x** (this backend) | `Robot(robot_sn)` | `states()` returns one struct, **snake_case** (`tcp_pose`, `ext_wrench_in_world`) | flat `SwitchMode` / `Send*` / `Stream*` |
+| **v2.x** (newest) | `Robot(robot_sn)` | `states()` returns a **dict keyed by `JointGroup`** | commands wrapped in `*Cmd` objects, setters take a leading `group` arg |
+
+This backend assumes the **v1.x** column: `Robot(robot_sn)`, `states().tcp_pose`,
+`SendCartesianMotionForce(pose, ...)`, `SetCartesianImpedance(K_x, Z_x)`,
+`SendJointPosition(positions, velocities, max_vel, max_acc)`,
+`SetForceControlFrame(CoordType)`, gripper `Move(width, velocity, force_limit)`.
+It will **not** work as-is on v0.x (different constructor + camelCase) or v2.x
+(dict/`JointGroup` API). If your robot ships v2.x, the changes are confined to
+this one backend file. Don't upgrade RDK without the matched firmware.
+
 ## The `# VERIFY:` convention
 
 Anywhere the code calls an RDK symbol whose exact name/signature may differ in
