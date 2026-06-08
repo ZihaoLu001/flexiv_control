@@ -199,6 +199,7 @@
     <nav class="nav-links">
       <a class="hide-sm" href="#features">Features</a>
       <a class="hide-sm" href="#tiers">Real-time</a>
+      <a class="hide-sm" href="#sim">Sim · GN01</a>
       <a class="hide-sm" href="#start">Quick start</a>
       <a class="hide-sm" href="#docs">Docs</a>
       <a class="btn" href="https://github.com/ZihaoLu001/flexiv_control" target="_blank" rel="noopener">GitHub ↗</a>
@@ -222,7 +223,7 @@
         <span class="chip">Apache-2.0</span>
         <span class="chip">Python ≥ 3.8</span>
         <span class="chip">numpy-only core</span>
-        <span class="chip">38 tests passing</span>
+        <span class="chip">70+ tests · CI green</span>
       </div>
       <div class="chips rise d6" style="margin-top:10px">
         <span class="chip warn">⚠ Community project — NOT affiliated with Flexiv Robotics</span>
@@ -295,7 +296,9 @@
       <div class="card"><div class="ic">⛓</div><h3>One action contract</h3><p><code>CartesianChunk</code>, <code>CartesianDelta</code>, <code>JointChunk</code>, <code>GripperCommand</code> + a quantified <code>ExecutionResult</code>. <code>from_waypoint_array(u)</code> ingests a planner's <code>(H,5)</code> array directly.</p></div>
       <div class="card"><div class="ic">🛡</div><h3>Safety is first-class</h3><p>A named, version-controlled <code>SafetyProfile</code> + a microsecond per-tick filter: workspace box, speed &amp; jump caps, joint limits, contact-wrench stop, watchdog. It clips or rejects — and <b>reports</b>.</p></div>
       <div class="card"><div class="ic">⚡</div><h3>Two real-time tiers</h3><p>Tier A: a 100–500&nbsp;Hz Python loop, no root, Standard license. Tier B: an optional C++ 1&nbsp;kHz daemon. <b>Same contract &amp; wire protocol</b> across both.</p></div>
-      <div class="card"><div class="ic">⇄</div><h3>Backend-agnostic</h3><p>Develop offline on <code>fake</code>, simulate on <code>mujoco</code>, deploy on a real Rizon via RDK — your policy code never changes.</p></div>
+      <div class="card"><div class="ic">⇄</div><h3>Sim ↔ real, one switch</h3><p>Develop offline on <code>fake</code>, simulate on <code>mujoco</code> (Jacobian IK + a faithful <b>GN01 gripper</b>), deploy on a real Rizon via RDK — your policy code never changes.</p></div>
+      <div class="card"><div class="ic">↻</div><h3>Receding-horizon &amp; VLA</h3><p>A <code>RecedingHorizonRunner</code> drives any <code>policy(obs) → chunk</code> — the seam for an openpi/VLA policy server, an MPC solver, or a sampler. Predict <i>H</i>, execute <i>H_exec</i>, replan.</p></div>
+      <div class="card"><div class="ic">⚿</div><h3>Multi-user safe</h3><p>An in-process lease <i>plus</i> a host-wide lock, so a second server or a stray script can't fight over the same arm.</p></div>
       <div class="card"><div class="ic">◰</div><h3>Optional layers</h3><p>A numpy-only server + <code>RemoteRobot</code> client (no ROS), a Gymnasium env, a LeRobot adapter, SpaceMouse teleop / RL intervention, and a ROS 2 overlay with a MoveIt-Servo jog.</p></div>
       <div class="card"><div class="ic">π</div><h3>numpy-only core</h3><p>The client installs with nothing but numpy and runs anywhere — an RL trainer, an MPC loop, a notebook. Everything heavier is an opt-in extra.</p></div>
     </div>
@@ -359,6 +362,46 @@
         </div>
         <div class="down">▾</div>
         <div class="row"><span class="node spine">Rizon — hard real-time loop runs inside the robot</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SIM · GN01 GRIPPER -->
+<section id="sim">
+  <div class="wrap">
+    <div class="kicker">real2sim2real</div>
+    <h2>A MuJoCo Rizon — with a faithful GN01 gripper</h2>
+    <p class="sub">The <code style="font-family:var(--mono);color:var(--blue)">mujoco</code> backend tracks Cartesian setpoints with a damped-least-squares Jacobian IK under gravity compensation, behind the same action contract as the real arm. A one-command builder attaches the GN01 / Grav parallel-jaw gripper — the real Flexiv meshes, the 4-bar linkage reproduced with MuJoCo equality constraints — to the official menagerie Rizon, so executed poses and grasp geometry match the lab.</p>
+    <div class="two">
+      <div class="card" style="padding:26px; display:grid; place-items:center">
+        <svg viewBox="0 0 320 240" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block; max-width:340px">
+          <defs>
+            <linearGradient id="grip" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#19e3c4"/><stop offset="1" stop-color="#4da3ff"/></linearGradient>
+          </defs>
+          <rect x="142" y="16" width="36" height="16" rx="4" fill="#0e1422" stroke="#22304a"/>
+          <text x="186" y="28" fill="#7c8db0" font-family="monospace" font-size="10">flange</text>
+          <rect x="104" y="34" width="112" height="46" rx="11" fill="#0e1422" stroke="url(#grip)" stroke-width="1.6"/>
+          <text x="160" y="61" fill="#e8eef7" font-family="monospace" font-size="12.5" text-anchor="middle">GN01 · Grav</text>
+          <circle cx="122" cy="84" r="4" fill="#5c7cb0"/><circle cx="198" cy="84" r="4" fill="#5c7cb0"/>
+          <path d="M118 84 L110 110 L110 196 Q110 204 118 204 L132 204 Q140 204 140 196 L140 110 Z" fill="url(#grip)" opacity="0.92"/>
+          <path d="M202 84 L210 110 L210 196 Q210 204 202 204 L188 204 Q180 204 180 196 L180 110 Z" fill="url(#grip)" opacity="0.92"/>
+          <line x1="140" y1="214" x2="180" y2="214" stroke="#9fb2cc" stroke-width="1.4"/>
+          <polygon points="140,214 147,210 147,218" fill="#9fb2cc"/>
+          <polygon points="180,214 173,210 173,218" fill="#9fb2cc"/>
+          <text x="160" y="232" fill="#19e3c4" font-family="monospace" font-size="11" text-anchor="middle">width · 0 – 0.10 m</text>
+        </svg>
+      </div>
+      <div>
+        <div class="card">
+          <h3 style="font-family:var(--disp);font-weight:600;font-size:16px;margin:0 0 10px">Build it once</h3>
+          <p style="margin:0;color:var(--muted);font-family:var(--mono);font-size:12px;line-height:1.7">python -m flexiv_control.sim.<span class="accent">build_rizon_gn01</span> \<br/>&nbsp;&nbsp;--arm &lt;menagerie&gt;/flexiv_rizon4/scene.xml \<br/>&nbsp;&nbsp;--grav-meshdir &lt;flexiv_description&gt;/meshes/Grav \<br/>&nbsp;&nbsp;--out rizon4_gn01.xml</p>
+        </div>
+        <div style="height:14px"></div>
+        <div class="card">
+          <h3 style="font-family:var(--disp);font-weight:600;font-size:16px;margin:0 0 8px">Continuous, not binary</h3>
+          <p style="margin:0;color:var(--muted);font-size:14px">A parallel-jaw gripper is continuous width (0–0.10 m), not 0/1. The 4-bar actuator is <code style="font-family:var(--mono);color:var(--blue)">ctrl = 9.404·w − 0.155</code>; <code style="font-family:var(--mono);color:var(--blue)">GripperCommand(width=…)</code> maps straight through.</p>
+        </div>
       </div>
     </div>
   </div>
