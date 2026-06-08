@@ -269,3 +269,27 @@ class RemoteRobot:
 
     def stop(self) -> None:
         self._call("stop", owner=self.owner)
+
+    # -- single-writer streaming session (server-side hold-on-stale) --------
+    def start_servo_loop(self, *, control_hz: Optional[float] = None) -> None:
+        """Start a server-side single-writer ReactiveServoLoop. While it runs,
+        ``servo_stream`` publishes the latest target fire-and-forget and a stall
+        holds (the watchdog re-issues the measured pose); blocking motion RPCs are
+        rejected until ``stop_servo_loop``."""
+        params = {"owner": self.owner}
+        if control_hz is not None:
+            params["control_hz"] = float(control_hz)
+        self._call("start_servo_loop", **params)
+
+    def servo_stream(self, pose, gripper: Optional[GripperCommand] = None) -> None:
+        self._call(
+            "servo_stream", owner=self.owner,
+            pose=np.asarray(pose, float).reshape(7).tolist(),
+            gripper=P.gripper_to_dict(gripper),
+        )
+
+    def servo_stream_joint(self, q) -> None:
+        self._call("servo_stream_joint", owner=self.owner, q=np.asarray(q, float).tolist())
+
+    def stop_servo_loop(self) -> None:
+        self._call("stop_servo_loop", owner=self.owner)

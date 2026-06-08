@@ -255,6 +255,37 @@ void NetworkThread(int port, SetPointMailbox& mailbox, flexiv::rdk::Robot& robot
                         resp["ok"] = true;
                         resp["result"] = {{"stopping", true}};
                         g_stop.store(true);
+                    } else if (method == "ping") {
+                        resp["ok"] = true;
+                        resp["result"] = {{"pong", true}};
+                    } else if (method == "acquire_lease" || method == "release_lease" ||
+                               method == "heartbeat" || method == "set_safety_profile" ||
+                               method == "start_cartesian_impedance" ||
+                               method == "start_joint_impedance") {
+                        // Single-client RT daemon: the lease / profile / mode handshake
+                        // is a no-op (the daemon already runs RT_CARTESIAN_MOTION_FORCE),
+                        // so a stock RemoteRobot connect()/__enter__/start_* succeeds.
+                        resp["ok"] = true;
+                        resp["result"] = json::object();
+                    } else if (method == "get_lease") {
+                        resp["ok"] = true;
+                        resp["result"] = {{"owner", ""}};
+                    } else if (method == "servo_cartesian_pose") {
+                        // RemoteRobot's streaming verb: publish the pose to the mailbox
+                        // and return a minimal ExecutionResult so result_from_dict works.
+                        const auto& sp_p = req.at("params");
+                        SetPoint sp;
+                        const auto pose = sp_p.at("pose");
+                        for (int i = 0; i < kPoseDim; ++i) sp.pose[i] = pose[i].get<double>();
+                        if (sp_p.contains("gripper") && !sp_p["gripper"].is_null()) {
+                            sp.gripper_width = sp_p["gripper"].value("width", -1.0);
+                            sp.gripper_force = sp_p["gripper"].value("force", 20.0);
+                        }
+                        mailbox.Publish(sp);
+                        resp["ok"] = true;
+                        resp["result"] = {{"result", {{"success", true},
+                                                      {"clipped", false},
+                                                      {"stop_reason", "none"}}}};
                     } else {
                         resp["ok"] = false;
                         resp["error"] = "unknown or non-RT method: " + method;

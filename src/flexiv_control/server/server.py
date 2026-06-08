@@ -17,14 +17,14 @@ Every motion/mode RPC carries an ``owner`` and is checked against the
 :class:`~flexiv_control.server.lease.Lease`; backend access is serialized by a
 lock so two threads can never interleave on one arm.
 
-Execution model: motion RPCs run **synchronously** inside the handler (the
-interpolate/stream loop runs to completion before the RPC returns). This is not
-an always-on single-writer loop -- for true server-side hold-on-stale streaming
-(a stalled policy holds rather than gapping the stream) use
-:class:`~flexiv_control.server.control_loop.ReactiveServoLoop` in-process, or the
-C++ Tier-B daemon. On Flexiv this gap is benign in practice: in the NRT modes the
-robot's internal motion generator holds the last commanded target between
-commands, so a pause between RPCs is a hold, not a jerk.
+Two execution models: (1) **synchronous** motion RPCs (servo_*/execute_*/move_*)
+run the interpolate/stream loop to completion inside the handler; (2) an
+**always-on single-writer streaming mode** -- ``start_servo_loop`` spins up a
+:class:`~flexiv_control.server.control_loop.ReactiveServoLoop` as the sole backend
+writer, and ``servo_stream`` publishes the latest target fire-and-forget, so a
+stalled remote client **holds** (the loop's watchdog re-issues the measured pose)
+rather than gapping the stream -- the Deoxys / Polymetis / SERL single-writer
+pattern. While the loop runs, blocking motion RPCs are rejected (single writer).
 """
 
 from __future__ import annotations
@@ -39,8 +39,16 @@ from ..config import RobotConfig
 from ..robot import Robot
 from ..types import GripperCommand, ImpedanceParams
 from . import protocol as P
+from .control_loop import ReactiveServoLoop
 from .host_lock import HostLock
 from .lease import Lease, LeaseError
+
+# Blocking motion RPCs that must not run while the single-writer servo loop owns
+# the backend (rejected in _dispatch when a loop is active).
+_LOOP_BLOCKED = frozenset({
+    "servo_cartesian_delta", "servo_cartesian_pose", "execute_cartesian_chunk",
+    "execute_joint_chunk", "move_joint", "home",
+})
 
 
 class FlexivControlServer:
@@ -63,6 +71,7 @@ class FlexivControlServer:
             HostLock(self.robot.cfg.robot_id, owner="server") if host_lock else None
         )
         self._robot_lock = threading.Lock()
+        self._servo_loop: Optional[ReactiveServoLoop] = None  # single-writer streaming
         self._tcp: Optional[socketserver.ThreadingTCPServer] = None
         self._handlers: Dict[str, Callable[[dict], Any]] = self._build_handlers()
 
@@ -122,6 +131,9 @@ class FlexivControlServer:
         return t
 
     def shutdown(self) -> None:
+        if self._servo_loop is not None:
+            self._servo_loop.stop()
+            self._servo_loop = None
         if self._tcp is not None:
             self._tcp.shutdown()
             self._tcp.server_close()
@@ -138,6 +150,10 @@ class FlexivControlServer:
         rid = req.get("id", -1)
         method = req.get("method", "")
         params = req.get("params", {}) or {}
+        if self._servo_loop is not None and method in _LOOP_BLOCKED:
+            return {"id": rid, "ok": False, "error":
+                    "servo loop active (single-writer streaming); call "
+                    "stop_servo_loop before blocking motion commands"}
         handler = self._handlers.get(method)
         if handler is None:
             return {"id": rid, "ok": False, "error": f"unknown method: {method!r}"}
@@ -174,6 +190,10 @@ class FlexivControlServer:
             "command_gripper": self._h_command_gripper,
             "home": self._h_home,
             "stop": self._h_stop,
+            "start_servo_loop": self._h_start_servo_loop,
+            "servo_stream": self._h_servo_stream,
+            "servo_stream_joint": self._h_servo_stream_joint,
+            "stop_servo_loop": self._h_stop_servo_loop,
         }
 
     # -- handlers ------------------------------------------------------------
@@ -198,8 +218,12 @@ class FlexivControlServer:
         return {"profile": self.robot.profile.name}
 
     def _h_get_state(self, p: dict) -> dict:
-        with self._robot_lock:
-            s = self.robot.get_state()
+        loop = self._servo_loop
+        if loop is not None:
+            s = loop.get_state()  # carries loop jitter/period/hold status
+        else:
+            with self._robot_lock:
+                s = self.robot.get_state()
         s.active_owner = self.lease.owner
         return {"state": P.state_to_dict(s)}
 
@@ -286,6 +310,42 @@ class FlexivControlServer:
 
     def _h_stop(self, p: dict) -> dict:
         # stop does not require the lease -- anyone may e-stop.
+        if self._servo_loop is not None:
+            self._servo_loop.stop()
+            self._servo_loop = None
         with self._robot_lock:
             self.robot.stop()
+        return {"stopped": True}
+
+    # -- always-on single-writer streaming loop (hold-on-stale) -------------
+    def _h_start_servo_loop(self, p: dict) -> dict:
+        self._require_lease(p)
+        with self._robot_lock:
+            if self._servo_loop is None:
+                loop = ReactiveServoLoop(self.robot, control_hz=p.get("control_hz"))
+                loop.start()
+                self._servo_loop = loop
+        return {"started": True}
+
+    def _h_servo_stream(self, p: dict) -> dict:
+        self._require_lease(p)
+        if self._servo_loop is None:
+            raise RuntimeError("no servo loop running; call start_servo_loop first")
+        self._servo_loop.set_cartesian_target(
+            np.asarray(p["pose"], float), gripper=P.gripper_from_dict(p.get("gripper"))
+        )
+        return {"ok": True}
+
+    def _h_servo_stream_joint(self, p: dict) -> dict:
+        self._require_lease(p)
+        if self._servo_loop is None:
+            raise RuntimeError("no servo loop running; call start_servo_loop first")
+        self._servo_loop.set_joint_target(np.asarray(p["q"], float))
+        return {"ok": True}
+
+    def _h_stop_servo_loop(self, p: dict) -> dict:
+        self._require_lease(p)
+        loop, self._servo_loop = self._servo_loop, None
+        if loop is not None:
+            loop.stop()
         return {"stopped": True}
