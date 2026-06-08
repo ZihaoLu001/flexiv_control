@@ -30,8 +30,9 @@ Homepage = "https://github.com/ZihaoLu001/flexiv_control"
 Repository = "https://github.com/ZihaoLu001/flexiv_control"
 
 [project.optional-dependencies]
-# Real Flexiv hardware (install per the Flexiv RDK docs; pin to your robot's version).
-flexiv = ["flexivrdk"]
+# Real Flexiv hardware. Pinned to RDK v1.x: the backend targets v1.x (robot
+# software v3.x); v0.x and v2.x have incompatible APIs -- see docs/versions.md.
+flexiv = ["flexivrdk>=1.5,<2"]
 # Reinforcement learning env.
 rl = ["gymnasium>=0.29"]
 # LeRobot community integration.
