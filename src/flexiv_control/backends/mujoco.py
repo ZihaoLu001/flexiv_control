@@ -37,6 +37,8 @@ class MujocoBackend(RobotBackend):
         *,
         tcp_site: Optional[str] = None,
         gripper_actuator: Optional[str] = None,
+        gripper_width_scale: float = 1.0,
+        gripper_width_offset: float = 0.0,
         ik_gain: float = 1.0,
         ik_damping: float = 1e-3,
         gravity_comp: bool = True,
@@ -46,6 +48,10 @@ class MujocoBackend(RobotBackend):
         self.dt = float(control_dt)
         self._tcp_site_name = tcp_site
         self._gripper_actuator_name = gripper_actuator
+        # Gripper actuator ctrl = scale * width_m + offset. Identity by default;
+        # for the GN01 4-bar the actuated knuckle is 9.404 * width - 0.155.
+        self._grip_scale = float(gripper_width_scale)
+        self._grip_offset = float(gripper_width_offset)
         self.ik_gain = float(ik_gain)
         self.ik_damping = float(ik_damping)
         # Cancel gravity + Coriolis each substep (computed-torque feedforward) so
@@ -146,7 +152,12 @@ class MujocoBackend(RobotBackend):
         mj.mj_jacSite(m, d, jacp, jacr, self._site)
         v = jacp[:, self._vadr] @ dq
         w = jacr[:, self._vadr] @ dq
-        gw = float(d.ctrl[self._grip_act]) if self._grip_act >= 0 else 0.0
+        # invert the actuator mapping back to a width in metres
+        gw = (
+            (float(d.ctrl[self._grip_act]) - self._grip_offset) / self._grip_scale
+            if self._grip_act >= 0
+            else 0.0
+        )
         return RobotState(
             stamp=float(d.time),
             q=q, dq=dq, tau=tau,
@@ -207,7 +218,10 @@ class MujocoBackend(RobotBackend):
     def move_gripper(self, cmd: GripperCommand) -> None:
         if self._grip_act < 0:
             return
-        self._d.ctrl[self._grip_act] = float(cmd.width)
+        m, d = self._m, self._d
+        ctrl = self._grip_scale * float(cmd.width) + self._grip_offset
+        lo, hi = m.actuator_ctrlrange[self._grip_act]
+        d.ctrl[self._grip_act] = min(max(ctrl, lo), hi) if hi > lo else ctrl
 
     # -- safety / motion ----------------------------------------------------
     def stop(self) -> None:

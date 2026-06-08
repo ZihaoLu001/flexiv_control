@@ -83,6 +83,9 @@ class Robot:
                 n_joints=self.cfg.n_joints,
                 control_dt=self.cfg.control_dt,
                 tcp_site=self.cfg.mujoco_tcp_site,
+                gripper_actuator=self.cfg.mujoco_gripper_actuator,
+                gripper_width_scale=self.cfg.mujoco_gripper_width_scale,
+                gripper_width_offset=self.cfg.mujoco_gripper_width_offset,
             )
         return {}
 

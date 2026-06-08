@@ -13,13 +13,18 @@ default_safety_profile: actahead_lab
 q_home: [-0.001, -0.700, -0.002, 1.573, 0.005, 0.689, -0.003]
 
 # --- MuJoCo sim (real2sim2real) -------------------------------------------
-# ActAhead renders with the official DeepMind menagerie model
-# mujoco_menagerie/flexiv_rizon4/scene.xml. Set model_path to its absolute path
-# (e.g. <ActAhead>/third_party/mujoco_menagerie/flexiv_rizon4/scene.xml), or
-# point FLEXIV_CONTROL_CONFIGS / model_path at a GN01-inclusive MJCF.
+# Build a persistent arm+GN01 model once with the bundled builder:
+#   python -m flexiv_control.sim.build_rizon_gn01 \
+#     --arm <menagerie>/flexiv_rizon4/scene.xml \
+#     --grav-meshdir <flexiv_description>/meshes/Grav \
+#     --out rizon4_gn01.xml
+# then set model_path to that file's absolute path. (An arm-only menagerie
+# scene.xml also works, but then there is no gripper and the TCP is the flange.)
 model_path: ""
 control_dt: 0.02
-# The arm-only menagerie model has no flange/gripper; the lab GN01 flange mount
-# (link7 -> flange) is xyz [0, 0, 0.124], rpy [0, 0, -pi]. For exact GN01 contact
-# geometry use a gripper-inclusive MJCF and set mujoco_tcp_site to its TCP site.
-mujoco_tcp_site: ""
+# Gripper TCP + actuator of the built GN01 model. The GN01 4-bar actuator ctrl is
+# 9.404 * width_m - 0.155 (so move_gripper width in [0, 0.10] m maps correctly).
+mujoco_tcp_site: "tcp"
+mujoco_gripper_actuator: "gn01_width"
+mujoco_gripper_width_scale: 9.404
+mujoco_gripper_width_offset: -0.155
