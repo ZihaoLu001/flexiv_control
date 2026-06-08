@@ -55,6 +55,7 @@ class ReactiveServoLoop:
         self._target_q: Optional[np.ndarray] = None
         self._target_gripper: Optional[GripperCommand] = None
         self._cmd_stamp = 0.0
+        self._chunk_iter = None  # active async chunk being streamed, if any
 
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -67,6 +68,7 @@ class ReactiveServoLoop:
     ) -> None:
         with self._lock:
             self._cartesian = True
+            self._chunk_iter = None  # a manual target preempts any async chunk
             self._target_pose = np.asarray(pose, float).reshape(7).copy()
             if gripper is not None:
                 self._target_gripper = gripper
@@ -75,7 +77,31 @@ class ReactiveServoLoop:
     def set_joint_target(self, q: np.ndarray) -> None:
         with self._lock:
             self._cartesian = False
+            self._chunk_iter = None
             self._target_q = np.asarray(q, float).copy()
+            self._cmd_stamp = time.time()
+
+    def enqueue_chunk(self, chunk) -> None:
+        """Stage a Cartesian chunk for the loop to interpolate and stream while
+        you compute the next one (async / receding-horizon "real-time chunking").
+
+        A newly enqueued chunk PREEMPTS the current one. Relative chunks are
+        resolved against the live pose and sliced to ``horizon_exec`` first; the
+        loop pulls one interpolated setpoint per tick and holds the last pose when
+        the chunk is exhausted (the watchdog still applies if you stop enqueuing).
+        """
+        from ..interpolation import CartesianChunkInterpolator
+
+        s = self.backend.read_state()
+        c = chunk.for_execution(s.tcp_pose)
+        interp = CartesianChunkInterpolator(
+            c, s.tcp_pose, self.hz,
+            max_linear_speed=self.filter.p.max_linear_speed,
+            max_angular_speed=self.filter.p.max_angular_speed,
+        )
+        with self._lock:
+            self._cartesian = True
+            self._chunk_iter = iter(interp)
             self._cmd_stamp = time.time()
 
     # -- introspection -------------------------------------------------------
@@ -135,6 +161,25 @@ class ReactiveServoLoop:
         while self._running:
             state = self.backend.read_state()
             self._latest_state = state
+
+            # Advance an enqueued chunk: pull one interpolated setpoint per tick
+            # into the target, refreshing the command stamp so it doesn't go
+            # stale mid-chunk. When the chunk is exhausted, leave the last target
+            # in place (hold) until the next enqueue / manual target.
+            with self._lock:
+                citer = self._chunk_iter
+            if citer is not None:
+                try:
+                    pose, grip = next(citer)
+                    with self._lock:
+                        self._cartesian = True
+                        self._target_pose = pose
+                        if grip is not None:
+                            self._target_gripper = grip
+                        self._cmd_stamp = time.time()
+                except StopIteration:
+                    with self._lock:
+                        self._chunk_iter = None
 
             with self._lock:
                 cartesian = self._cartesian

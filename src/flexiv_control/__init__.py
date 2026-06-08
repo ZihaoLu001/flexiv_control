@@ -59,6 +59,9 @@ from .backends import FakeBackend, RobotBackend, get_backend  # noqa: F401
 # --- the one facade
 from .robot import LeaseError, Robot  # noqa: F401
 
+# --- receding-horizon / VLA policy-server seam
+from .recede import RecedingHorizonRunner  # noqa: F401
+
 __all__ = [
     "__version__",
     # types
@@ -90,6 +93,8 @@ __all__ = [
     # facade
     "Robot",
     "LeaseError",
+    # receding horizon
+    "RecedingHorizonRunner",
 ]
 
 
