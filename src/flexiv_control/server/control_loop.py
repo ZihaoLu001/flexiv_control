@@ -177,6 +177,9 @@ class ReactiveServoLoop:
         while self._running:
             state = self.backend.read_state()
             self._latest_state = state
+            # Age of the state data itself (fresh synchronous reads are ~0 ms);
+            # the opt-in state-age watchdog protective-stops on a stale backend.
+            state_age_ms = (time.time() - state.stamp) * 1000.0
 
             # Advance an enqueued chunk: pull one interpolated setpoint per tick
             # into the target, refreshing the command stamp so it doesn't go
@@ -222,20 +225,33 @@ class ReactiveServoLoop:
             with self._wlock:
                 p = self.filter.p
                 stale = age > (p.command_timeout_ms / 1000.0)
+                state_stale = not self.filter.check_state_age(state_age_ms).ok
                 if faulted:
                     self.backend.stop()
                     self._stats.last_status = SafetyStatus.FAULT
                     self._stats.last_stop_reason = StopReason.BACKEND_FAULT
+                elif state_stale:
+                    # State data too old to trust for position -> protective stop
+                    # (opt-in via stop_on_state_stale).
+                    self.backend.stop()
+                    self._stats.last_status = SafetyStatus.STOPPED
+                    self._stats.last_stop_reason = StopReason.STALE_STATE
                 elif stale and p.stop_on_stale_command:
-                    # Hold position: re-issue the *current measured* pose, don't
-                    # keep tracking an old setpoint. Re-anchor the filter so the
-                    # next live command is referenced to where we actually are.
-                    self._stats.last_status = SafetyStatus.HOLDING
-                    self.filter.reset(state)
-                    if cartesian:
-                        self.backend.stream_cartesian(state.tcp_pose)
+                    if p.hold_timeout_ms is not None and age > (p.hold_timeout_ms / 1000.0):
+                        # Held too long -> escalate the hold to a protective stop.
+                        self.backend.stop()
+                        self._stats.last_status = SafetyStatus.STOPPED
+                        self._stats.last_stop_reason = StopReason.STALE_COMMAND
                     else:
-                        self.backend.stream_joint(state.q)
+                        # Hold position: re-issue the *current measured* pose, don't
+                        # keep tracking an old setpoint. Re-anchor the filter so the
+                        # next live command is referenced to where we actually are.
+                        self._stats.last_status = SafetyStatus.HOLDING
+                        self.filter.reset(state)
+                        if cartesian:
+                            self.backend.stream_cartesian(state.tcp_pose)
+                        else:
+                            self.backend.stream_joint(state.q)
                 else:
                     if cartesian and target_pose is not None:
                         sr = self.filter.filter_cartesian(target_pose, state)
@@ -249,6 +265,9 @@ class ReactiveServoLoop:
                             self._stats.last_status = (
                                 SafetyStatus.CLIPPED if sr.clipped else SafetyStatus.OK
                             )
+                            # Surface WHICH limit clipped (workspace/jump/speed),
+                            # not just that something did; NONE when unclipped.
+                            self._stats.last_stop_reason = sr.primary_clip_reason
                         else:
                             self.backend.stop()
                             self._stats.last_status = SafetyStatus.STOPPED
@@ -261,6 +280,7 @@ class ReactiveServoLoop:
                             self._stats.last_status = (
                                 SafetyStatus.CLIPPED if sr.clipped else SafetyStatus.OK
                             )
+                            self._stats.last_stop_reason = sr.primary_clip_reason
                         else:
                             self.backend.stop()
                             self._stats.last_status = SafetyStatus.STOPPED
