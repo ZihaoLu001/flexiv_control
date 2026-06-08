@@ -202,5 +202,46 @@ class FlexivRealEnv(_EnvBase):
 
 
 def make_env(**kwargs) -> FlexivRealEnv:
-    """Convenience factory mirroring ``gym.make`` ergonomics."""
+    """Convenience factory. The env is also registered as ``FlexivReal-v0`` when
+    gymnasium is installed, so ``gym.make("FlexivReal-v0", ...)`` works too."""
     return FlexivRealEnv(**kwargs)
+
+
+# -- HIL-SERL-style human intervention wrapper ------------------------------
+if HAVE_GYM:
+
+    class SpacemouseIntervention(gym.Wrapper):
+        """Human-in-the-loop intervention wrapper (SERL / HIL-SERL contract).
+
+        Wrap a :class:`FlexivRealEnv` and pass any object exposing
+        ``intervention(action) -> (action, intervened)`` -- e.g.
+        :class:`flexiv_control.teleop.SpaceMouseTeleop`. When the operator takes
+        over (deadman held + device moved) the human delta replaces the policy
+        action; the executed action and a flag are written into ``info``
+        (``info["intervene_action"]``, ``info["intervened"]``) so an actor-learner
+        trains on the human correction, matching SERL's ``SpacemouseIntervention``.
+        """
+
+        def __init__(self, env, teleop):
+            super().__init__(env)
+            self.teleop = teleop
+
+        def step(self, action):
+            action, intervened = self.teleop.intervention(action)
+            obs, reward, terminated, truncated, info = self.env.step(action)
+            info["intervene_action"] = np.asarray(action, np.float32)
+            info["intervened"] = bool(intervened)
+            return obs, reward, terminated, truncated, info
+
+    try:
+        gym.register(id="FlexivReal-v0", entry_point="flexiv_control.envs:FlexivRealEnv")
+    except Exception:  # already registered, or a gym build without register
+        pass
+
+else:  # pragma: no cover - needs gymnasium
+
+    class SpacemouseIntervention:  # type: ignore[no-redef]
+        def __init__(self, *a, **k):
+            raise ImportError(
+                "SpacemouseIntervention needs gymnasium: pip install 'flexiv-control[rl]'"
+            )

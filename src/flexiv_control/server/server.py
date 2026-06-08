@@ -16,6 +16,15 @@ lease, the safety filter on every setpoint -- are transport-independent.
 Every motion/mode RPC carries an ``owner`` and is checked against the
 :class:`~flexiv_control.server.lease.Lease`; backend access is serialized by a
 lock so two threads can never interleave on one arm.
+
+Execution model: motion RPCs run **synchronously** inside the handler (the
+interpolate/stream loop runs to completion before the RPC returns). This is not
+an always-on single-writer loop -- for true server-side hold-on-stale streaming
+(a stalled policy holds rather than gapping the stream) use
+:class:`~flexiv_control.server.control_loop.ReactiveServoLoop` in-process, or the
+C++ Tier-B daemon. On Flexiv this gap is benign in practice: in the NRT modes the
+robot's internal motion generator holds the last commanded target between
+commands, so a pause between RPCs is a hold, not a jerk.
 """
 
 from __future__ import annotations

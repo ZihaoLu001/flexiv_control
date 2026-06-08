@@ -1,16 +1,19 @@
 """MuJoCo backend (stub) for sim and real2sim2real.
 
-Why this matters for RL / planning: the *same* ``CartesianChunk`` / ``CartesianDelta``
-action and the *same* ``RobotState`` observation are used in sim and on the real
-robot. That is the contract that makes real2sim2real and sim-trained policies
-transfer with no rewrite -- exactly the property Deoxys (robosuite->real) and
-Polymetis (pybullet->real) are valued for.
+The *intended* property (once this backend is implemented): the *same*
+``CartesianChunk`` / ``CartesianDelta`` action and the *same* ``RobotState``
+observation drive sim and the real robot, so real2sim2real and sim-trained
+policies transfer with no rewrite -- the property Deoxys (robosuite->real) and
+Polymetis (pybullet->real) are valued for. The interface/contract already
+delivers this for the ``fake`` <-> ``flexiv_rdk`` pair.
 
-This is a deliberate stub: it defines the structure and the integration points
-but leaves the model load + IK / operational-space mapping for you to fill in
-against your Rizon MJCF. The Flexiv
-``flexiv_description`` URDF / your MuJoCo model and a Jacobian-based or
-``mujoco`` MJX IK step go where marked ``TODO``.
+NOTE: this MuJoCo backend is currently a **deliberate, non-functional stub** --
+``connect()`` raises ``NotImplementedError`` rather than faking success. It
+defines the structure and integration points but leaves the model load +
+IK / operational-space mapping for you to fill in against your Rizon MJCF (the
+Flexiv ``flexiv_description`` URDF / your MuJoCo model + a Jacobian or ``mujoco``
+MJX IK step go where marked ``TODO``). Until then the sim2real *leg* is
+structurally unified but functionally absent.
 """
 
 from __future__ import annotations

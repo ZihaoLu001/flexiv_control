@@ -53,9 +53,9 @@ class ControlMode(str, Enum):
     RT_JOINT_IMPEDANCE = "rt_joint_impedance"
     RT_CARTESIAN_MOTION_FORCE = "rt_cartesian_motion_force"
 
-    # --- Torque-level research mode. Highest risk; OFF unless explicitly enabled
-    #     by a lab admin with a dedicated safety profile. Never a default
-    #     entry point for RL or a high-level planner.
+    # --- Torque-level research mode. Highest risk; gated off by default. The
+    #     RDK backend raises unless built with allow_torque=True, and no facade /
+    #     server / ROS path exposes it. Never a default entry for RL or a planner.
     RT_JOINT_TORQUE = "rt_joint_torque"
 
     @property

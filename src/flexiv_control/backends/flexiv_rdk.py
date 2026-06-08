@@ -84,12 +84,39 @@ def _rdk_coord(frame: str):
     return C.TCP if str(frame).lower() in ("tcp", "flange", "ee") else C.WORLD
 
 
+def _warn_rdk_version() -> None:
+    """Warn if the installed flexivrdk is outside the supported v1.x range.
+
+    Enforces (as a soft check) the version discipline docs/versions.md documents:
+    this backend targets RDK v1.x; v0.x and v2.x have incompatible APIs.
+    """
+    v = getattr(flexivrdk, "__version__", None)
+    if not v:
+        return
+    try:
+        major = int(str(v).split(".")[0])
+    except Exception:
+        return
+    if major != 1:
+        import warnings
+
+        warnings.warn(
+            f"flexivrdk {v} detected, but this backend targets RDK v1.x. "
+            "v0.x and v2.x have incompatible APIs (constructor, state fields, "
+            "command form); see docs/versions.md. Pin flexivrdk>=1.5,<2.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
 class FlexivRdkBackend(RobotBackend):
     def __init__(
         self,
         robot_sn: str,
         n_joints: int = 7,
         gripper_name: Optional[str] = None,
+        *,
+        allow_torque: bool = False,
     ):
         if not _RDK_AVAILABLE:
             raise ImportError(
@@ -100,6 +127,7 @@ class FlexivRdkBackend(RobotBackend):
         self.robot_sn = robot_sn
         self.n_joints = n_joints
         self._gripper_name = gripper_name
+        self._allow_torque = bool(allow_torque)
         self._robot = None
         self._gripper = None
         self._mode = ControlMode.IDLE
@@ -107,6 +135,7 @@ class FlexivRdkBackend(RobotBackend):
 
     # -- lifecycle ----------------------------------------------------------
     def connect(self) -> None:
+        _warn_rdk_version()
         self._robot = flexivrdk.Robot(self.robot_sn)  # VERIFY: ctor signature
 
         # Clear any minor fault, then enable + wait until operational.
@@ -184,6 +213,14 @@ class FlexivRdkBackend(RobotBackend):
         nullspace_q: Optional[np.ndarray] = None,
         max_contact_wrench: Optional[np.ndarray] = None,
     ) -> None:
+        if mode == ControlMode.RT_JOINT_TORQUE and not self._allow_torque:
+            # Active gate (not just gating-by-omission): direct joint torque
+            # bypasses the robot's impedance safety loop, so it is opt-in only.
+            raise RuntimeError(
+                "RT_JOINT_TORQUE is gated off. Construct "
+                "FlexivRdkBackend(..., allow_torque=True) to enable direct "
+                "joint-torque control (expert/research mode)."
+            )
         self._robot.SwitchMode(_rdk_mode(mode))  # VERIFY
         self._mode = mode
 
