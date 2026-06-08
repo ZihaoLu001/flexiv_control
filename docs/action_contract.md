@@ -99,8 +99,34 @@ The normalised gripper maps to a width with `width = clip(w, 0, 1) * 0.08`
 (≈ the 80 mm stroke of the lab's gripper). Override `gripper_force=` and pass any
 `CartesianChunk` field through `**chunk_kwargs` (e.g.
 `safety_profile="contact_manipulation"`). `from_waypoint_array` is position-only,
-so orientation is always held; build full-SE(3) `CartesianWaypoint`s if you need
-to command orientation.
+so orientation is always held; use `from_pose_array` (below) to command it.
+
+### Canonical chunk extensions
+
+`CartesianChunk` is a *canonical* action chunk: beyond the per-waypoint SE(3)
+pose + gripper + duration and the per-chunk impedance/force/limits, it carries:
+
+- **`representation`** (`ChunkRepresentation.ABSOLUTE` default, or
+  `RELATIVE_TO_START`). Absolute = waypoints are targets in `frame` (the
+  ALOHA/DROID convention). Relative = each waypoint is a pose *relative to the
+  TCP pose at chunk start* (`T_abs = T_start · T_rel`, the UMI relative-trajectory
+  convention), re-anchored to the live pose at execution so it never accumulates
+  sequential step-to-step error. Which is better is task/calibration dependent —
+  it is an explicit field, not a baked-in default.
+- **Predict-vs-execute horizon.** `horizon_pred` = predicted waypoints;
+  `n_execute` → `horizon_exec` = how many actually run before replanning. A
+  `Robot` executes only the first `horizon_exec` waypoints (receding horizon;
+  Diffusion-Policy reference: predict ~16, execute ~8).
+- **Orientation-carrying array:** `from_pose_array(u)` ingests an `(H, 9)` array
+  of `(x, y, z, qw, qx, qy, qz, w, n)` rows — the orientation-bearing sibling of
+  the position-only `(H, 5)` `from_waypoint_array`.
+
+```python
+from flexiv_control import CartesianChunk, ChunkRepresentation
+chunk = CartesianChunk.from_pose_array(u_h9,         # (H, 9) SE(3) + gripper + n
+                                       representation=ChunkRepresentation.RELATIVE_TO_START,
+                                       n_execute=8)   # predict H, execute 8, replan
+```
 
 ## `CartesianDelta` — the RL / MPC / teleop workhorse
 
@@ -136,13 +162,22 @@ JointChunk(
 
 ## `GripperCommand`
 
+A parallel-jaw gripper is **continuous**, not binary: the canonical/hardware
+command is an opening `width` in metres (+ `force`, `velocity`), matching Flexiv
+RDK `Gripper.Move(width, velocity, force_limit)` / `Gripper.Grasp(force)`. The
+`0/1` you see in learning benchmarks is a normalized *abstraction* on top of this
+continuous width — not a hardware limit.
+
 ```python
 GripperCommand(
     width=0.0,        # metres
     force=20.0,       # Newtons (clamping force)
     velocity=0.1,     # m/s
-    grasp=False,      # True -> move-until-contact; False -> position move
+    grasp=False,      # True -> move-until-contact (RDK Grasp); False -> position move
 )
+
+# normalized learning-layer command [0,1] -> physical width (pass your stroke):
+GripperCommand.from_normalized(0.7, span=0.08)   # width = 0.7 * 0.08 m
 ```
 
 ## `ExecutionResult` — quantifies the "execution" failure bucket

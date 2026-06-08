@@ -206,6 +206,10 @@ class Robot:
         self._check_lease()
         start = self.get_state()
         self.filter.reset(start)
+        # Resolve relative-to-start poses against the live start pose and slice to
+        # the execution horizon (receding horizon): only the first H_exec waypoints
+        # run here; the rest are re-predicted by the planner next cycle.
+        chunk = chunk.for_execution(start.tcp_pose)
         interp = CartesianChunkInterpolator(
             chunk,
             start.tcp_pose,
