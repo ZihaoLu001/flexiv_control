@@ -58,7 +58,7 @@ where = ["src"]
 # The YAML config templates live inside the package (src/flexiv_control/configs/)
 # so they ship in the wheel; config.py resolves profile names against that dir.
 [tool.setuptools.package-data]
-flexiv_control = ["configs/**/*.yaml"]
+flexiv_control = ["configs/**/*.yaml", "sim/*.xml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,92 @@
+<!--
+  Flexiv GN01 / Grav parallel-jaw gripper, MuJoCo MJCF.
+
+  Authored for flexiv_control by converting the official Flexiv ROS description
+  (flexivrobotics/flexiv_description @ humble-v2, Apache-2.0): real Grav meshes
+  (meshes/Grav/{visual,collision}) + the grav_macro.xacro kinematics. The xacro
+  `mimic` couplings are reproduced with MuJoCo <equality> joint constraints, and
+  the single finger-width DOF is exposed as a position actuator on `left_knuckle`
+  with ctrl = 9.404 * width_m - 0.155 (width in [0, 0.10] m).
+
+  `__GRAV_MESHDIR__` is filled in by flexiv_control.sim.build_rizon_gn01 with the
+  path to flexiv_description/meshes/Grav. This file defines the gripper alone;
+  the builder attaches grav_base_link to a Rizon arm's flange.
+-->
+<mujoco model="flexiv_gn01">
+  <compiler angle="radian" autolimits="true" meshdir="__GRAV_MESHDIR__"/>
+  <asset>
+    <material name="flexiv_black" rgba="0.12 0.12 0.12 1"/>
+    <mesh name="grav_base"     file="visual/base.stl"            scale="0.001 0.001 0.001"/>
+    <mesh name="grav_static"   file="visual/static_assembly.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="grav_outerbar" file="visual/outer_bar.stl"       scale="0.001 0.001 0.001"/>
+    <mesh name="grav_innerbar" file="visual/inner_bar.stl"       scale="0.001 0.001 0.001"/>
+    <mesh name="grav_fmount"   file="visual/finger_mount.stl"    scale="0.001 0.001 0.001"/>
+    <mesh name="grav_ftip"     file="visual/finger_tip.obj"      scale="0.001 0.001 0.001"/>
+    <mesh name="grav_base_col" file="collision/base.stl"         scale="0.001 0.001 0.001"/>
+    <mesh name="grav_ftip_col" file="collision/finger_tip.stl"   scale="0.001 0.001 0.001"/>
+  </asset>
+  <worldbody>
+    <body name="grav_base_link">
+      <inertial pos="0 0 0.057" mass="1.186" diaginertia="3e-3 3e-3 1e-3"/>
+      <geom type="mesh" mesh="grav_base"   euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="grav_static" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+      <geom type="mesh" mesh="grav_base_col" euler="0 0 1.5708" group="3"/>
+      <!-- LEFT finger -->
+      <body name="left_outer_bar" pos="0 -0.0325 0.0825">
+        <joint name="left_knuckle" type="hinge" axis="1 0 0" range="-0.155 0.7854"/>
+        <inertial pos="0 0 0.029" mass="1e-3" diaginertia="1e-6 1e-6 1e-6"/>
+        <geom type="mesh" mesh="grav_outerbar" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+        <body name="left_finger_mount" pos="0 0 0.058">
+          <joint name="left_inner_finger" type="hinge" axis="1 0 0" range="-0.7854 0.155"/>
+          <inertial pos="0 0 0" mass="1e-3" diaginertia="1e-6 1e-6 1e-6"/>
+          <geom type="mesh" mesh="grav_fmount" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+          <body name="left_finger_tip" pos="0 0.010 0.0235">
+            <inertial pos="0 0 0.02" mass="0.02" diaginertia="1e-5 1e-5 1e-5"/>
+            <geom type="mesh" mesh="grav_ftip" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+            <geom type="mesh" mesh="grav_ftip_col" euler="0 0 1.5708" group="3" friction="1.2 0.05 0.001"/>
+            <site name="left_finger_tcp" pos="0 0.0135 0.036" size="0.004" rgba="1 0 0 0.6"/>
+          </body>
+        </body>
+      </body>
+      <body name="left_inner_bar" pos="0 -0.0165 0.0995">
+        <joint name="left_inner_knuckle" type="hinge" axis="1 0 0" range="-0.155 0.7854"/>
+        <inertial pos="0 0 0.029" mass="1e-3" diaginertia="1e-6 1e-6 1e-6"/>
+        <geom type="mesh" mesh="grav_innerbar" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+      </body>
+      <!-- RIGHT finger (mirror via z=pi) -->
+      <body name="right_outer_bar" pos="0 0.0325 0.0825" euler="0 0 3.14159265">
+        <joint name="right_knuckle" type="hinge" axis="1 0 0" range="-0.155 0.7854"/>
+        <inertial pos="0 0 0.029" mass="1e-3" diaginertia="1e-6 1e-6 1e-6"/>
+        <geom type="mesh" mesh="grav_outerbar" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+        <body name="right_finger_mount" pos="0 0 0.058">
+          <joint name="right_inner_finger" type="hinge" axis="1 0 0" range="-0.7854 0.155"/>
+          <inertial pos="0 0 0" mass="1e-3" diaginertia="1e-6 1e-6 1e-6"/>
+          <geom type="mesh" mesh="grav_fmount" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+          <body name="right_finger_tip" pos="0 0.010 0.0235">
+            <inertial pos="0 0 0.02" mass="0.02" diaginertia="1e-5 1e-5 1e-5"/>
+            <geom type="mesh" mesh="grav_ftip" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+            <geom type="mesh" mesh="grav_ftip_col" euler="0 0 1.5708" group="3" friction="1.2 0.05 0.001"/>
+            <site name="right_finger_tcp" pos="0 0.0135 0.036" size="0.004" rgba="0 0 1 0.6"/>
+          </body>
+        </body>
+      </body>
+      <body name="right_inner_bar" pos="0 0.0165 0.0995" euler="0 0 3.14159265">
+        <joint name="right_inner_knuckle" type="hinge" axis="1 0 0" range="-0.155 0.7854"/>
+        <inertial pos="0 0 0.029" mass="1e-3" diaginertia="1e-6 1e-6 1e-6"/>
+        <geom type="mesh" mesh="grav_innerbar" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
+      </body>
+      <!-- gripper TCP (between the closed fingertips) -->
+      <site name="tcp" pos="0 0 0.18" size="0.005" rgba="0 1 0 0.6"/>
+    </body>
+  </worldbody>
+  <equality>
+    <joint joint1="right_knuckle"       joint2="left_knuckle" polycoef="0 1 0 0 0"/>
+    <joint joint1="left_inner_knuckle"  joint2="left_knuckle" polycoef="0 1 0 0 0"/>
+    <joint joint1="right_inner_knuckle" joint2="left_knuckle" polycoef="0 1 0 0 0"/>
+    <joint joint1="left_inner_finger"   joint2="left_knuckle" polycoef="0 -1 0 0 0"/>
+    <joint joint1="right_inner_finger"  joint2="left_knuckle" polycoef="0 -1 0 0 0"/>
+  </equality>
+  <actuator>
+    <position name="gn01_width" joint="left_knuckle" ctrlrange="-0.155 0.7854" kp="40"/>
+  </actuator>
+</mujoco>

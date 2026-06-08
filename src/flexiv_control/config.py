@@ -110,6 +110,9 @@ class RobotConfig:
     model_path: Optional[str] = None
     control_dt: float = 0.02
     mujoco_tcp_site: Optional[str] = None
+    mujoco_gripper_actuator: Optional[str] = None
+    mujoco_gripper_width_scale: float = 1.0
+    mujoco_gripper_width_offset: float = 0.0
 
     @classmethod
     def load(cls, path_or_name: str) -> "RobotConfig":
@@ -128,6 +131,13 @@ class RobotConfig:
         c.model_path = d.get("model_path", c.model_path)
         c.control_dt = float(d.get("control_dt", c.control_dt))
         c.mujoco_tcp_site = d.get("mujoco_tcp_site", c.mujoco_tcp_site)
+        c.mujoco_gripper_actuator = d.get("mujoco_gripper_actuator", c.mujoco_gripper_actuator)
+        c.mujoco_gripper_width_scale = float(
+            d.get("mujoco_gripper_width_scale", c.mujoco_gripper_width_scale)
+        )
+        c.mujoco_gripper_width_offset = float(
+            d.get("mujoco_gripper_width_offset", c.mujoco_gripper_width_offset)
+        )
         return c
 
 

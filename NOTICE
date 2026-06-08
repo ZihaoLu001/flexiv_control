@@ -4,6 +4,14 @@ Copyright 2026 Zihao Lu
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 This is an independent, community-maintained project. It is NOT affiliated with,
-endorsed by, or supported by Flexiv Robotics. "Flexiv", "Rizon", and "RDK" are
-trademarks of their respective owner and are used here only to describe
-compatibility, as permitted under Section 6 of the Apache License, Version 2.0.
+endorsed by, or supported by Flexiv Robotics. "Flexiv", "Rizon", "Grav", "GN01",
+and "RDK" are trademarks of their respective owner and are used here only to
+describe compatibility, as permitted under Section 6 of the Apache License,
+Version 2.0.
+
+The MuJoCo GN01 gripper model (src/flexiv_control/sim/grav_gn01.xml) reproduces
+the kinematics of the official Flexiv ROS description "flexiv_description"
+(https://github.com/flexivrobotics/flexiv_description), licensed Apache-2.0. The
+gripper meshes are NOT redistributed here; the builder
+(flexiv_control.sim.build_rizon_gn01) references your own flexiv_description
+checkout.
