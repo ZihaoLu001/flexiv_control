@@ -24,12 +24,17 @@ an MPC horizon, a robosuite/MuJoCo rollout, or an RL action-chunk needs:
     chunks map in with zero changes),
   * per-waypoint stiffness/limits so the *same* chunk can describe a free-space
     reach and a contact-rich push,
+  * an explicit ``representation`` (absolute vs relative-to-chunk-start) and a
+    predict-vs-execute horizon split (``n_execute`` -> ``horizon_exec``), so the
+    receding-horizon "predict H_pred, execute H_exec, replan" loop (Diffusion
+    Policy Tp/Ta) is first-class rather than implicit,
   * an explicit safety_profile name so execution is reproducible.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import Enum
 from typing import List, Optional
 
 import numpy as np
@@ -80,6 +85,26 @@ class CartesianWaypoint:
         return float(self.n_frames) / float(control_hz)
 
 
+class ChunkRepresentation(str, Enum):
+    """How the waypoint poses in a chunk are interpreted.
+
+    * ``ABSOLUTE`` (default): each waypoint is an absolute target in the chunk's
+      ``frame`` (base by default) -- the ALOHA/DROID convention.
+    * ``RELATIVE_TO_START``: each waypoint is a pose *relative to the TCP pose at
+      the start of the chunk* (composed ``T_abs = T_start . T_rel``) -- the
+      UMI-style relative-trajectory convention that is robust to base/camera
+      calibration drift. It is resolved to absolute at execution time against the
+      live start pose, so a chunk never accumulates sequential step-to-step error.
+
+    Which is better is task/setup dependent (UMI favours relative for
+    calibration-free in-the-wild use; DROID ships absolute), so this is an
+    explicit field, not a baked-in default.
+    """
+
+    ABSOLUTE = "absolute"
+    RELATIVE_TO_START = "relative_to_start"
+
+
 @dataclass
 class CartesianChunk:
     """A short, bounded sequence of Cartesian waypoints -- the core action type.
@@ -108,6 +133,15 @@ class CartesianChunk:
 
     frame: str = "base"
 
+    # Absolute vs relative-to-chunk-start pose semantics (see ChunkRepresentation).
+    representation: ChunkRepresentation = ChunkRepresentation.ABSOLUTE
+
+    # Receding-horizon split: the chunk *predicts* len(waypoints) (H_pred) but the
+    # robot executes only the first ``n_execute`` (H_exec) before replanning.
+    # None -> execute the whole chunk. Diffusion-Policy reference: predict ~16,
+    # execute ~8.
+    n_execute: Optional[int] = None
+
     def __post_init__(self) -> None:
         if not self.waypoints:
             raise ValueError("CartesianChunk needs at least one waypoint")
@@ -118,8 +152,62 @@ class CartesianChunk:
     def horizon(self) -> int:
         return len(self.waypoints)
 
+    @property
+    def horizon_pred(self) -> int:
+        """Number of predicted waypoints (H_pred)."""
+        return len(self.waypoints)
+
+    @property
+    def horizon_exec(self) -> int:
+        """Number of waypoints actually executed before replanning (H_exec)."""
+        n = self.n_execute if self.n_execute is not None else len(self.waypoints)
+        return max(1, min(int(n), len(self.waypoints)))
+
     def total_duration(self, control_hz: float) -> float:
         return sum(w.resolve_duration(control_hz) for w in self.waypoints)
+
+    def resolve_to_absolute(self, start_pose: np.ndarray) -> "CartesianChunk":
+        """Return an ABSOLUTE-representation copy of this chunk.
+
+        Identity if already absolute. For ``RELATIVE_TO_START`` each waypoint is
+        composed onto ``start_pose`` (the live TCP pose at chunk start) as
+        ``T_abs = T_start . T_rel`` -- so relative chunks are re-anchored to the
+        current measured pose each cycle and never accumulate sequential error.
+        """
+        if self.representation == ChunkRepresentation.ABSOLUTE:
+            return self
+        from . import transforms as T
+
+        sp = np.asarray(start_pose, float).reshape(7)
+        s_pos, s_quat = sp[:3], sp[3:7]
+        new_wps: List[CartesianWaypoint] = []
+        for w in self.waypoints:
+            abs_pos = s_pos + T.quat_rotate(s_quat, w.position)
+            abs_quat = (
+                s_quat.copy()
+                if w.quaternion is None
+                else T.quat_normalize(T.quat_mul(s_quat, w.quaternion))
+            )
+            new_wps.append(
+                CartesianWaypoint(
+                    position=abs_pos, quaternion=abs_quat, gripper=w.gripper,
+                    n_frames=w.n_frames, duration=w.duration, frame=w.frame,
+                )
+            )
+        return replace(self, waypoints=new_wps, representation=ChunkRepresentation.ABSOLUTE)
+
+    def for_execution(self, start_pose: np.ndarray) -> "CartesianChunk":
+        """Resolve to absolute and slice to the execution horizon H_exec.
+
+        This is what a ``Robot`` runs: relative chunks become absolute against the
+        live start pose, and only the first ``n_execute`` waypoints are kept (the
+        rest are discarded and re-predicted next cycle -- receding horizon).
+        """
+        c = self.resolve_to_absolute(start_pose)
+        he = self.horizon_exec
+        if he >= len(c.waypoints):
+            return c
+        return replace(c, waypoints=c.waypoints[:he], n_execute=None)
 
     # -- Convenience constructors -------------------------------------------
     @classmethod
@@ -128,15 +216,19 @@ class CartesianChunk:
         u: np.ndarray,
         *,
         gripper_force: float = 20.0,
+        gripper_span: float = 0.08,
         hold_orientation: bool = True,
         **chunk_kwargs,
     ) -> "CartesianChunk":
         """Build a chunk directly from a planner's ``(H, 5)`` action array ``u``.
 
         ``u`` is an ``(H, 5)`` array of rows ``(x, y, z, w, n)`` where ``w`` is a
-        normalised gripper command in ``[0, 1]`` (1 = open, 0 = closed) and ``n``
-        is the integer number of low-level control frames. Orientation is held
-        from the previous pose by default.
+        *normalised* gripper command in ``[0, 1]`` (1 = open, 0 = closed) and ``n``
+        is the integer number of low-level control frames. ``w`` is mapped to a
+        physical width ``w * gripper_span`` -- pass your gripper's real stroke as
+        ``gripper_span`` (e.g. RDK ``GripperParams.max_width``); the 0.08 m default
+        is the lab GN01 and must not be assumed for other grippers. Orientation is
+        held from the previous pose; use :meth:`from_pose_array` to command it.
         """
         u = np.asarray(u, float)
         if u.ndim != 2 or u.shape[1] != 5:
@@ -144,21 +236,56 @@ class CartesianChunk:
         # An (H, 5) array carries no orientation, so every waypoint holds the
         # previous orientation (quaternion=None). ``hold_orientation`` is accepted
         # for API symmetry but is necessarily True for this position-only format;
-        # pass full SE(3) ``CartesianWaypoint``s if you need to command orientation.
+        # use ``from_pose_array`` (H,9) if you need to command orientation.
         if not hold_orientation:
             raise ValueError(
                 "from_waypoint_array ingests position-only (H,5) actions and cannot "
-                "set orientation; build CartesianWaypoint(s) with quaternions instead."
+                "set orientation; use from_pose_array((H,9)) or build "
+                "CartesianWaypoint(s) with quaternions instead."
             )
         wpts: List[CartesianWaypoint] = []
         for x, y, z, w, n in u:
-            grip = GripperCommand(width=float(np.clip(w, 0, 1)) * 0.08, force=gripper_force)
+            grip = GripperCommand.from_normalized(w, span=gripper_span, force=gripper_force)
             wpts.append(
                 CartesianWaypoint(
                     position=[x, y, z],
                     quaternion=None,
                     gripper=grip,
                     n_frames=max(1, int(round(n))),
+                )
+            )
+        return cls(waypoints=wpts, **chunk_kwargs)
+
+    @classmethod
+    def from_pose_array(
+        cls,
+        u: np.ndarray,
+        *,
+        gripper_force: float = 20.0,
+        gripper_span: float = 0.08,
+        **chunk_kwargs,
+    ) -> "CartesianChunk":
+        """Build a chunk from an ``(H, 9)`` array that carries orientation.
+
+        Each row is ``(x, y, z, qw, qx, qy, qz, w, n)``: an SE(3) pose (quaternion
+        w-first) + normalised gripper ``w`` in ``[0, 1]`` + frame count ``n``. This
+        is the orientation-carrying sibling of :meth:`from_waypoint_array`, for
+        policies/planners that emit per-step orientation (full SE(3) action
+        chunks, e.g. ACT/openpi-style). Combine with ``representation=`` and
+        ``n_execute=`` via ``chunk_kwargs`` for relative / receding-horizon use.
+        """
+        u = np.asarray(u, float)
+        if u.ndim != 2 or u.shape[1] != 9:
+            raise ValueError("u must have shape (H, 9): (x,y,z, qw,qx,qy,qz, w, n)")
+        wpts: List[CartesianWaypoint] = []
+        for row in u:
+            grip = GripperCommand.from_normalized(row[7], span=gripper_span, force=gripper_force)
+            wpts.append(
+                CartesianWaypoint(
+                    position=row[:3],
+                    quaternion=row[3:7],
+                    gripper=grip,
+                    n_frames=max(1, int(round(row[8]))),
                 )
             )
         return cls(waypoints=wpts, **chunk_kwargs)

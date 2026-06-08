@@ -30,6 +30,7 @@ import numpy as np
 from ..action_chunk import (
     CartesianChunk,
     CartesianWaypoint,
+    ChunkRepresentation,
     ExecutionResult,
     JointChunk,
     JointWaypoint,
@@ -213,6 +214,8 @@ def chunk_to_dict(c: CartesianChunk) -> dict:
         else c.max_contact_wrench.tolist(),
         "safety_profile": c.safety_profile,
         "frame": c.frame,
+        "representation": c.representation.value,
+        "n_execute": c.n_execute,
     }
 
 
@@ -260,6 +263,8 @@ def chunk_from_dict(d: dict) -> CartesianChunk:
         else np.asarray(d["max_contact_wrench"], float),
         safety_profile=d.get("safety_profile", "tabletop_safe"),
         frame=d.get("frame", "base"),
+        representation=ChunkRepresentation(d.get("representation", "absolute")),
+        n_execute=d.get("n_execute"),
     )
 
 

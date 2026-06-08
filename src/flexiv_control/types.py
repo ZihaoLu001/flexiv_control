@@ -182,10 +182,39 @@ class ForceControlParams:
 
 @dataclass
 class GripperCommand:
-    """A single gripper setpoint."""
+    """A single gripper setpoint.
+
+    The canonical/hardware representation is a *continuous* opening ``width`` in
+    metres plus ``force`` (N) and ``velocity`` (m/s) -- matching Flexiv RDK's
+    ``Gripper.Move(width, velocity, force_limit)``. A parallel-jaw gripper is NOT
+    binary open/close; the 0/1 you see in learning benchmarks is a normalized
+    *abstraction* on top of this continuous width. ``grasp=True`` selects
+    move-until-contact force control (RDK ``Gripper.Grasp(force)``) instead of a
+    position move.
+    """
 
     width: float = 0.0          # metres
     force: float = 20.0         # Newtons (clamping force)
     velocity: float = 0.1       # m/s
     # If True the command is "grasp" (move until contact/force); else "move".
     grasp: bool = False
+
+    @classmethod
+    def from_normalized(
+        cls,
+        opening: float,
+        *,
+        span: float = 0.08,
+        min_width: float = 0.0,
+        force: float = 20.0,
+        velocity: float = 0.1,
+    ) -> "GripperCommand":
+        """Build from a normalized opening in ``[0, 1]`` (1 = open, 0 = closed).
+
+        ``width = min_width + clip(opening, 0, 1) * span``. Pass your gripper's
+        real stroke as ``span`` (e.g. RDK ``GripperParams.max_width``) so the
+        normalized learning-layer command maps to true metres -- do not assume a
+        fixed stroke.
+        """
+        o = float(np.clip(opening, 0.0, 1.0))
+        return cls(width=min_width + o * span, force=force, velocity=velocity)
