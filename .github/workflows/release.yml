@@ -1,9 +1,9 @@
 name: release
 
 # Build the wheel + sdist and publish to PyPI when a GitHub Release is published
-# (or via manual dispatch). To enable publishing, set up PyPI Trusted Publishing
-# for ZihaoLu001/flexiv_control (recommended, no secret needed), OR add a
-# PYPI_API_TOKEN repository secret and uncomment the `with: password:` line below.
+# (or via manual dispatch). Publishing uses PyPI Trusted Publishing (OIDC) for
+# ZihaoLu001/flexiv_control -- no secret/token. `skip-existing` keeps manual
+# re-dispatches idempotent (an already-published version is skipped, not an error).
 
 on:
   release:
@@ -14,8 +14,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Build sdist + wheel
@@ -31,7 +31,7 @@ jobs:
           print("yaml files in wheel:", n)
           sys.exit(0 if n >= 7 else 1)
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -43,11 +43,14 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        # with:
-        #   password: ${{ secrets.PYPI_API_TOKEN }}   # uncomment if NOT using Trusted Publishing
+        with:
+          # Trusted Publishing (OIDC) -- no password/secret. skip-existing makes
+          # a manual re-dispatch idempotent: an already-published version is
+          # skipped instead of failing the run.
+          skip-existing: true
