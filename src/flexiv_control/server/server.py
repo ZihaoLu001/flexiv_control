@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import socketserver
 import threading
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, Optional
 
 import numpy as np
@@ -43,12 +44,10 @@ from .control_loop import ReactiveServoLoop
 from .host_lock import HostLock
 from .lease import Lease, LeaseError
 
-# Blocking motion RPCs that must not run while the single-writer servo loop owns
-# the backend (rejected in _dispatch when a loop is active).
-_LOOP_BLOCKED = frozenset({
-    "servo_cartesian_delta", "servo_cartesian_pose", "execute_cartesian_chunk",
-    "execute_joint_chunk", "move_joint", "home",
-})
+
+class _ServoLoopActive(RuntimeError):
+    """Raised when a blocking motion RPC is attempted while the always-on
+    single-writer servo loop owns the backend."""
 
 
 class FlexivControlServer:
@@ -131,9 +130,10 @@ class FlexivControlServer:
         return t
 
     def shutdown(self) -> None:
-        if self._servo_loop is not None:
-            self._servo_loop.stop()
-            self._servo_loop = None
+        with self._robot_lock:
+            loop, self._servo_loop = self._servo_loop, None
+        if loop is not None:
+            loop.stop()
         if self._tcp is not None:
             self._tcp.shutdown()
             self._tcp.server_close()
@@ -150,10 +150,6 @@ class FlexivControlServer:
         rid = req.get("id", -1)
         method = req.get("method", "")
         params = req.get("params", {}) or {}
-        if self._servo_loop is not None and method in _LOOP_BLOCKED:
-            return {"id": rid, "ok": False, "error":
-                    "servo loop active (single-writer streaming); call "
-                    "stop_servo_loop before blocking motion commands"}
         handler = self._handlers.get(method)
         if handler is None:
             return {"id": rid, "ok": False, "error": f"unknown method: {method!r}"}
@@ -162,6 +158,8 @@ class FlexivControlServer:
             return {"id": rid, "ok": True, "result": result}
         except LeaseError as e:
             return {"id": rid, "ok": False, "error": f"lease: {e}"}
+        except _ServoLoopActive as e:
+            return {"id": rid, "ok": False, "error": str(e)}
         except Exception as e:  # surface backend / validation errors to the client
             return {"id": rid, "ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -170,6 +168,25 @@ class FlexivControlServer:
         self.lease.check(owner)
         self.robot._owner = owner  # noqa: SLF001  keep the facade's check consistent
         return owner
+
+    @contextmanager
+    def _motion_lock(self):
+        """Acquire the single backend-writer lock for a blocking motion/mode RPC,
+        refusing it atomically if the always-on servo loop owns the backend.
+
+        Checking ``_servo_loop`` *under* ``_robot_lock`` -- the same lock the
+        handler holds for its whole backend op, and the same lock
+        ``start_servo_loop`` takes to install a loop -- closes the check-then-act
+        window: a loop can neither appear during a motion op nor let a motion op
+        slip past once installed. This is the single-writer invariant, enforced.
+        """
+        with self._robot_lock:
+            if self._servo_loop is not None:
+                raise _ServoLoopActive(
+                    "servo loop active (single-writer streaming); call "
+                    "stop_servo_loop before blocking motion commands"
+                )
+            yield
 
     def _build_handlers(self) -> Dict[str, Callable[[dict], Any]]:
         return {
@@ -203,6 +220,12 @@ class FlexivControlServer:
 
     def _h_release_lease(self, p: dict) -> dict:
         self.lease.release(p.get("owner", ""))
+        # Releasing the lease must also tear down an always-on servo loop, else
+        # it would keep writing to the arm with no lease holder (orphan writer).
+        with self._robot_lock:
+            loop, self._servo_loop = self._servo_loop, None
+        if loop is not None:
+            loop.stop()
         with self._robot_lock:
             self.robot.stop()
         return {"released": True}
@@ -218,12 +241,11 @@ class FlexivControlServer:
         return {"profile": self.robot.profile.name}
 
     def _h_get_state(self, p: dict) -> dict:
-        loop = self._servo_loop
+        with self._robot_lock:
+            loop = self._servo_loop
+            s = self.robot.get_state() if loop is None else None
         if loop is not None:
             s = loop.get_state()  # carries loop jitter/period/hold status
-        else:
-            with self._robot_lock:
-                s = self.robot.get_state()
         s.active_owner = self.lease.owner
         return {"state": P.state_to_dict(s)}
 
@@ -238,7 +260,7 @@ class FlexivControlServer:
                 ),
             )
         ns = None if p.get("nullspace_q") is None else np.asarray(p["nullspace_q"], float)
-        with self._robot_lock:
+        with self._motion_lock():
             self.robot.start_cartesian_impedance(
                 impedance=imp, realtime=bool(p.get("realtime", False)), nullspace_q=ns
             )
@@ -246,13 +268,13 @@ class FlexivControlServer:
 
     def _h_start_joint_impedance(self, p: dict) -> dict:
         self._require_lease(p)
-        with self._robot_lock:
+        with self._motion_lock():
             self.robot.start_joint_impedance(realtime=bool(p.get("realtime", False)))
         return {"started": True}
 
     def _h_servo_cartesian_delta(self, p: dict) -> dict:
         self._require_lease(p)
-        with self._robot_lock:
+        with self._motion_lock():
             r = self.robot.servo_cartesian_delta(
                 np.asarray(p["delta"], float),
                 duration=p.get("duration"),
@@ -263,7 +285,7 @@ class FlexivControlServer:
 
     def _h_servo_cartesian_pose(self, p: dict) -> dict:
         self._require_lease(p)
-        with self._robot_lock:
+        with self._motion_lock():
             r = self.robot.servo_cartesian_pose(
                 np.asarray(p["pose"], float),
                 duration=float(p.get("duration", 0.2)),
@@ -274,20 +296,20 @@ class FlexivControlServer:
     def _h_execute_cartesian_chunk(self, p: dict) -> dict:
         self._require_lease(p)
         chunk = P.chunk_from_dict(p["chunk"])
-        with self._robot_lock:
+        with self._motion_lock():
             r = self.robot.execute_cartesian_chunk(chunk, blocking=True)
         return {"result": P.result_to_dict(r)}
 
     def _h_execute_joint_chunk(self, p: dict) -> dict:
         self._require_lease(p)
         chunk = P.joint_chunk_from_dict(p["chunk"])
-        with self._robot_lock:
+        with self._motion_lock():
             r = self.robot.execute_joint_chunk(chunk)
         return {"result": P.result_to_dict(r)}
 
     def _h_move_joint(self, p: dict) -> dict:
         self._require_lease(p)
-        with self._robot_lock:
+        with self._motion_lock():
             r = self.robot.move_joint(
                 np.asarray(p["q"], float),
                 duration=float(p.get("duration", 3.0)),
@@ -298,21 +320,26 @@ class FlexivControlServer:
     def _h_command_gripper(self, p: dict) -> dict:
         self._require_lease(p)
         g = P.gripper_from_dict(p["gripper"]) or GripperCommand()
-        with self._robot_lock:
+        with self._motion_lock():
             self.robot.command_gripper(g)
         return {"ok": True}
 
     def _h_home(self, p: dict) -> dict:
         self._require_lease(p)
-        with self._robot_lock:
+        with self._motion_lock():
             self.robot.home()
         return {"ok": True}
 
     def _h_stop(self, p: dict) -> dict:
-        # stop does not require the lease -- anyone may e-stop.
-        if self._servo_loop is not None:
-            self._servo_loop.stop()
-            self._servo_loop = None
+        # stop does not require the lease -- anyone may e-stop. Null the loop
+        # field atomically (so a concurrent blocking RPC can't pass the
+        # _motion_lock guard mid-teardown), then join+stop it OUTSIDE the lock
+        # (loop.stop() joins the thread, which itself wants the lock per tick --
+        # holding it here would deadlock the join).
+        with self._robot_lock:
+            loop, self._servo_loop = self._servo_loop, None
+        if loop is not None:
+            loop.stop()
         with self._robot_lock:
             self.robot.stop()
         return {"stopped": True}
@@ -322,30 +349,39 @@ class FlexivControlServer:
         self._require_lease(p)
         with self._robot_lock:
             if self._servo_loop is None:
-                loop = ReactiveServoLoop(self.robot, control_hz=p.get("control_hz"))
+                # Share _robot_lock with the loop so its per-tick writes and the
+                # handlers' writes are mutually exclusive (single writer).
+                loop = ReactiveServoLoop(
+                    self.robot, control_hz=p.get("control_hz"), write_lock=self._robot_lock
+                )
                 loop.start()
                 self._servo_loop = loop
         return {"started": True}
 
     def _h_servo_stream(self, p: dict) -> dict:
         self._require_lease(p)
-        if self._servo_loop is None:
+        with self._robot_lock:
+            loop = self._servo_loop
+        if loop is None:
             raise RuntimeError("no servo loop running; call start_servo_loop first")
-        self._servo_loop.set_cartesian_target(
+        loop.set_cartesian_target(
             np.asarray(p["pose"], float), gripper=P.gripper_from_dict(p.get("gripper"))
         )
         return {"ok": True}
 
     def _h_servo_stream_joint(self, p: dict) -> dict:
         self._require_lease(p)
-        if self._servo_loop is None:
+        with self._robot_lock:
+            loop = self._servo_loop
+        if loop is None:
             raise RuntimeError("no servo loop running; call start_servo_loop first")
-        self._servo_loop.set_joint_target(np.asarray(p["q"], float))
+        loop.set_joint_target(np.asarray(p["q"], float))
         return {"ok": True}
 
     def _h_stop_servo_loop(self, p: dict) -> dict:
         self._require_lease(p)
-        loop, self._servo_loop = self._servo_loop, None
+        with self._robot_lock:
+            loop, self._servo_loop = self._servo_loop, None
         if loop is not None:
             loop.stop()
         return {"stopped": True}

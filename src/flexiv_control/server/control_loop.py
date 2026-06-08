@@ -18,6 +18,7 @@ command buffer -- the realtime-buffer pattern used by ros2_control / Polymetis.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import threading
 import time
@@ -42,13 +43,25 @@ class LoopStats:
 
 
 class ReactiveServoLoop:
-    def __init__(self, robot: Robot, control_hz: Optional[float] = None):
+    def __init__(
+        self,
+        robot: Robot,
+        control_hz: Optional[float] = None,
+        write_lock: Optional[threading.Lock] = None,
+    ):
         self.robot = robot
         self.backend = robot.backend
         self.filter = robot.filter
         self.hz = float(control_hz or robot.control_hz)
         self.dt = 1.0 / self.hz
 
+        # The backend-writer lock. When embedded in a server this is the SAME
+        # lock its request handlers hold around backend access, so the loop's
+        # per-tick writes can never overlap a handler write -- preserving the
+        # single-writer-to-hardware invariant even across the two threads.
+        # Standalone (no server) the loop is already the only writer, so a no-op
+        # context is used.
+        self._wlock = write_lock if write_lock is not None else contextlib.nullcontext()
         self._lock = threading.Lock()
         self._cartesian = True  # else joint
         self._target_pose: Optional[np.ndarray] = None
@@ -145,7 +158,10 @@ class ReactiveServoLoop:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
-        self.backend.stop()
+        # The loop thread is joined (no longer a writer); take the shared writer
+        # lock for the final stop so it can't race a server handler's write.
+        with self._wlock:
+            self.backend.stop()
 
     def __enter__(self) -> "ReactiveServoLoop":
         self.start()
@@ -193,47 +209,51 @@ class ReactiveServoLoop:
             # Read the watchdog from the LIVE profile each tick so a mid-run
             # set_safety_profile() swap applies both the timeout and the flag
             # consistently (they used to diverge: flag live, timeout cached).
-            p = self.filter.p
-            stale = age > (p.command_timeout_ms / 1000.0)
-            if stale and p.stop_on_stale_command:
-                # Hold position: re-issue the *current measured* pose, don't
-                # keep tracking an old setpoint. Re-anchor the filter so the
-                # next live command is referenced to where we actually are.
-                self._stats.last_status = SafetyStatus.HOLDING
-                self.filter.reset(state)
-                if cartesian:
-                    self.backend.stream_cartesian(state.tcp_pose)
+            # The whole decide-and-write section runs under the shared writer
+            # lock so it can never overlap a server handler's backend write (or a
+            # concurrent set_safety_profile() swap of the very profile we read).
+            with self._wlock:
+                p = self.filter.p
+                stale = age > (p.command_timeout_ms / 1000.0)
+                if stale and p.stop_on_stale_command:
+                    # Hold position: re-issue the *current measured* pose, don't
+                    # keep tracking an old setpoint. Re-anchor the filter so the
+                    # next live command is referenced to where we actually are.
+                    self._stats.last_status = SafetyStatus.HOLDING
+                    self.filter.reset(state)
+                    if cartesian:
+                        self.backend.stream_cartesian(state.tcp_pose)
+                    else:
+                        self.backend.stream_joint(state.q)
                 else:
-                    self.backend.stream_joint(state.q)
-            else:
-                if cartesian and target_pose is not None:
-                    sr = self.filter.filter_cartesian(target_pose, state)
-                    if sr.ok:
-                        self.backend.stream_cartesian(sr.pose)
-                        if gripper is not None:
-                            self.backend.move_gripper(gripper)
-                            with self._lock:
-                                self._target_gripper = None
-                        self._stats.last_clipped = sr.clipped
-                        self._stats.last_status = (
-                            SafetyStatus.CLIPPED if sr.clipped else SafetyStatus.OK
-                        )
-                    else:
-                        self.backend.stop()
-                        self._stats.last_status = SafetyStatus.STOPPED
-                        self._stats.last_stop_reason = sr.reason
-                elif not cartesian and target_q is not None:
-                    sr = self.filter.filter_joint(target_q, state)
-                    if sr.ok:
-                        self.backend.stream_joint(sr.q)
-                        self._stats.last_clipped = sr.clipped
-                        self._stats.last_status = (
-                            SafetyStatus.CLIPPED if sr.clipped else SafetyStatus.OK
-                        )
-                    else:
-                        self.backend.stop()
-                        self._stats.last_status = SafetyStatus.STOPPED
-                        self._stats.last_stop_reason = sr.reason
+                    if cartesian and target_pose is not None:
+                        sr = self.filter.filter_cartesian(target_pose, state)
+                        if sr.ok:
+                            self.backend.stream_cartesian(sr.pose)
+                            if gripper is not None:
+                                self.backend.move_gripper(gripper)
+                                with self._lock:
+                                    self._target_gripper = None
+                            self._stats.last_clipped = sr.clipped
+                            self._stats.last_status = (
+                                SafetyStatus.CLIPPED if sr.clipped else SafetyStatus.OK
+                            )
+                        else:
+                            self.backend.stop()
+                            self._stats.last_status = SafetyStatus.STOPPED
+                            self._stats.last_stop_reason = sr.reason
+                    elif not cartesian and target_q is not None:
+                        sr = self.filter.filter_joint(target_q, state)
+                        if sr.ok:
+                            self.backend.stream_joint(sr.q)
+                            self._stats.last_clipped = sr.clipped
+                            self._stats.last_status = (
+                                SafetyStatus.CLIPPED if sr.clipped else SafetyStatus.OK
+                            )
+                        else:
+                            self.backend.stop()
+                            self._stats.last_status = SafetyStatus.STOPPED
+                            self._stats.last_stop_reason = sr.reason
 
             # diagnostics
             now = time.perf_counter()
