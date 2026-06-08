@@ -33,10 +33,12 @@ def test_backend_contract_fake():
     b.stream_joint(np.zeros(7))
 
 
-def test_mujoco_backend_is_honest_stub():
-    # The stub must fail LOUDLY (not fake a successful connect).
+def test_mujoco_backend_fails_loudly_without_model():
+    # Constructible without a model, but connect() fails LOUDLY (no fake success):
+    # ValueError if mujoco is installed but no model_path was given; ImportError
+    # if mujoco itself is not installed.
     mj = get_backend("mujoco")  # constructible (model_path defaults to None)
-    with pytest.raises((NotImplementedError, ImportError)):
+    with pytest.raises((ValueError, ImportError, NotImplementedError)):
         mj.connect()
 
 

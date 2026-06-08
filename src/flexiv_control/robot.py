@@ -65,19 +65,26 @@ class Robot:
         self.cfg = config or RobotConfig()
         self.control_hz = float(control_hz or self.cfg.control_hz)
         self.dt = 1.0 / self.control_hz
-        self.backend = backend or get_backend(
-            self.cfg.backend,
-            **(
-                dict(robot_sn=self.cfg.robot_sn, gripper_name=self.cfg.gripper_name)
-                if self.cfg.backend in ("flexiv_rdk", "rdk", "flexiv")
-                else {}
-            ),
-        )
+        self.backend = backend or get_backend(self.cfg.backend, **self._backend_kwargs())
         self._owner: Optional[str] = None
         self.profile: SafetyProfile = load_safety_profile(
             safety_profile or self.cfg.default_safety_profile
         )
         self.filter = SafetyFilter(self.profile, self.dt)
+
+    def _backend_kwargs(self) -> dict:
+        """Per-backend construction kwargs drawn from the config."""
+        b = self.cfg.backend.lower()
+        if b in ("flexiv_rdk", "rdk", "flexiv"):
+            return dict(robot_sn=self.cfg.robot_sn, gripper_name=self.cfg.gripper_name)
+        if b in ("mujoco", "mjx"):
+            return dict(
+                model_path=self.cfg.model_path,
+                n_joints=self.cfg.n_joints,
+                control_dt=self.cfg.control_dt,
+                tcp_site=self.cfg.mujoco_tcp_site,
+            )
+        return {}
 
     # -- construction helpers ------------------------------------------------
     @classmethod

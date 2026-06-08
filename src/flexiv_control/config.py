@@ -105,6 +105,11 @@ class RobotConfig:
     q_home: np.ndarray = field(
         default_factory=lambda: np.array([0.0, -0.7, 0.0, 1.6, 0.0, 0.9, 0.0], float)
     )
+    # MuJoCo backend (sim / real2sim2real): path to a Rizon MJCF, the control
+    # substep duration, and an optional TCP site name.
+    model_path: Optional[str] = None
+    control_dt: float = 0.02
+    mujoco_tcp_site: Optional[str] = None
 
     @classmethod
     def load(cls, path_or_name: str) -> "RobotConfig":
@@ -120,6 +125,9 @@ class RobotConfig:
         c.default_safety_profile = d.get("default_safety_profile", c.default_safety_profile)
         if "q_home" in d:
             c.q_home = np.asarray(d["q_home"], float)
+        c.model_path = d.get("model_path", c.model_path)
+        c.control_dt = float(d.get("control_dt", c.control_dt))
+        c.mujoco_tcp_site = d.get("mujoco_tcp_site", c.mujoco_tcp_site)
         return c
 
 
