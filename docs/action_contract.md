@@ -96,9 +96,11 @@ chunk = CartesianChunk.from_waypoint_array(u)            # orientation held thro
 ```
 
 The normalised gripper maps to a width with `width = clip(w, 0, 1) * 0.08`
-(≈ the 80 mm stroke of the lab's gripper). Override `gripper_force=`,
-`hold_orientation=`, and pass any `CartesianChunk` field through `**chunk_kwargs`
-(e.g. `safety_profile="contact_manipulation"`).
+(≈ the 80 mm stroke of the lab's gripper). Override `gripper_force=` and pass any
+`CartesianChunk` field through `**chunk_kwargs` (e.g.
+`safety_profile="contact_manipulation"`). `from_waypoint_array` is position-only,
+so orientation is always held; build full-SE(3) `CartesianWaypoint`s if you need
+to command orientation.
 
 ## `CartesianDelta` — the RL / MPC / teleop workhorse
 

@@ -31,6 +31,8 @@ from ..action_chunk import (
     CartesianChunk,
     CartesianWaypoint,
     ExecutionResult,
+    JointChunk,
+    JointWaypoint,
 )
 from ..types import (
     ControlMode,
@@ -258,4 +260,38 @@ def chunk_from_dict(d: dict) -> CartesianChunk:
         else np.asarray(d["max_contact_wrench"], float),
         safety_profile=d.get("safety_profile", "tabletop_safe"),
         frame=d.get("frame", "base"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# JointChunk
+# ---------------------------------------------------------------------------
+def joint_chunk_to_dict(c: JointChunk) -> dict:
+    return {
+        "waypoints": [
+            {
+                "positions": w.positions.tolist(),
+                "n_frames": w.n_frames,
+                "duration": w.duration,
+            }
+            for w in c.waypoints
+        ],
+        "max_joint_speed_scale": c.max_joint_speed_scale,
+        "safety_profile": c.safety_profile,
+    }
+
+
+def joint_chunk_from_dict(d: dict) -> JointChunk:
+    wpts = [
+        JointWaypoint(
+            positions=np.asarray(w["positions"], float),
+            n_frames=w.get("n_frames"),
+            duration=w.get("duration"),
+        )
+        for w in d["waypoints"]
+    ]
+    return JointChunk(
+        waypoints=wpts,
+        max_joint_speed_scale=float(d.get("max_joint_speed_scale", 0.3)),
+        safety_profile=d.get("safety_profile", "tabletop_safe"),
     )

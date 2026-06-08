@@ -171,10 +171,11 @@ class CartesianChunk:
 class CartesianDelta:
     """A relative end-effector move, integrated on top of the current pose.
 
-    This is the standard RL / MPC / teleop action: ``[dx, dy, dz, droll, dpitch,
-    dyaw]`` plus a gripper command, applied over ``duration`` seconds. It maps
-    1:1 onto robosuite/MuJoCo OSC-style actions, which is what makes sim->real
-    transfer clean.
+    This is the standard RL / MPC / teleop action: ``[dx, dy, dz, rx, ry, rz]``
+    plus a gripper command, applied over ``duration`` seconds. The last three are
+    an axis-angle *rotation vector* (not roll/pitch/yaw Euler angles), matching
+    robosuite/MuJoCo ``OSC_POSE`` -- which is what makes sim->real transfer clean.
+    The translation is taken in ``frame`` ("base" or "tcp").
     """
 
     delta: np.ndarray                       # length-6, base or tcp frame

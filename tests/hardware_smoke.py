@@ -54,7 +54,6 @@ def main() -> int:
     print(f"[..] flexivrdk imported (file: {getattr(flexivrdk, '__file__', '?')})")
 
     from flexiv_control import Robot, RobotConfig
-    from flexiv_control.types import ControlMode
 
     cfg = RobotConfig(backend="flexiv_rdk", robot_sn=args.sn, gripper_name=args.gripper)
     robot = Robot(cfg)

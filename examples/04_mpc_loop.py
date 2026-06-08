@@ -22,7 +22,6 @@ import time
 import numpy as np
 
 from flexiv_control import Robot, RobotConfig
-from flexiv_control.transforms import integrate_pose
 
 
 def trivial_mpc(state_pose: np.ndarray, goal_xyz: np.ndarray, dt: float) -> np.ndarray:

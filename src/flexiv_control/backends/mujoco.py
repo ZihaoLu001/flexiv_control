@@ -20,19 +20,19 @@ from typing import Optional
 import numpy as np
 
 from ..types import (
-    CART_DOF,
     ControlMode,
-    ForceControlParams,
     GripperCommand,
-    ImpedanceParams,
-    JointImpedanceParams,
     RobotState,
 )
 from .base import RobotBackend
 
 
 class MujocoBackend(RobotBackend):
-    def __init__(self, model_path: str, n_joints: int = 7, control_dt: float = 0.001):
+    # NOTE: model_path defaults to None so the backend is constructible through
+    # the Robot()/get_backend factory and CLI without a TypeError. It is a stub:
+    # connect() fails fast (see below) until the model load + IK/OSC mapping are
+    # implemented, rather than reporting a misleading successful connection.
+    def __init__(self, model_path: Optional[str] = None, n_joints: int = 7, control_dt: float = 0.001):
         self.model_path = model_path
         self.n_joints = n_joints
         self.dt = control_dt
@@ -46,9 +46,15 @@ class MujocoBackend(RobotBackend):
             import mujoco  # noqa: F401
         except Exception as exc:  # pragma: no cover
             raise ImportError("MujocoBackend needs `pip install mujoco`") from exc
+        # Fail loudly and early: this is a deliberate stub. read_state()/stream_*
+        # are not implemented, so a "successful" connect() would be misleading.
         # TODO: self._model = mujoco.MjModel.from_xml_path(self.model_path)
-        #       self._data = mujoco.MjData(self._model)
-        self._connected = True
+        #       self._data = mujoco.MjData(self._model); self._connected = True
+        raise NotImplementedError(
+            "MujocoBackend is a stub: provide your Rizon MJCF as `model_path` and "
+            "implement the model load + IK/OSC mapping (read_state/stream_*) in "
+            "backends/mujoco.py before using the 'mujoco' backend."
+        )
 
     def disconnect(self) -> None:
         self._connected = False

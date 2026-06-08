@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 from flexiv_control import CartesianChunk, CartesianWaypoint
 from flexiv_control import transforms as T

@@ -73,8 +73,9 @@ This is the Tier-A / Tier-B decision (see [architecture.md](architecture.md) and
 - **Tier B — C++ 1 kHz host loop, Professional license.** When you need a true
   1 kHz *host* loop (very high-rate streaming MPC, tight contact, torque-level
   research), run the optional `cpp/rt_server` (`flexiv::rdk::Scheduler`, RT
-  modes). It speaks the **same wire protocol**, so a `RemoteRobot`-based MPC
-  client does not change when you upgrade. See [`cpp/README.md`](../cpp/README.md).
+  modes). It speaks the **same wire protocol**, but today implements only the
+  streaming subset; see [`cpp/README.md`](../cpp/README.md) for the exact method
+  set and how to drive it (a stock `RemoteRobot` needs the lease handlers first).
 
 Practical guidance: profile first. If your end-to-end latency budget is met at
 Tier A (it usually is for vision-driven MPC), stay there. Reach for Tier B only

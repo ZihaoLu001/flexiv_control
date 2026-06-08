@@ -36,6 +36,10 @@ def generate_launch_description() -> LaunchDescription:
         executable="control_node",
         name="flexiv_control_node",
         output="screen",
+        # Land JointState on the global /joint_states so robot_state_publisher /
+        # RViz / joint_state consumers pick it up (the node publishes it on the
+        # node-private ~/joint_states).
+        remappings=[("~/joint_states", "/joint_states")],
         parameters=[{
             "backend": LaunchConfiguration("backend"),
             "robot_serial": LaunchConfiguration("robot_serial"),

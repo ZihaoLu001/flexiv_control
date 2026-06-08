@@ -23,7 +23,6 @@ from typing import Optional
 
 import numpy as np
 
-from . import transforms as T
 from .action_chunk import (
     CartesianChunk,
     CartesianDelta,
@@ -47,7 +46,6 @@ from .types import (
     ImpedanceParams,
     JointImpedanceParams,
     RobotState,
-    SafetyStatus,
     StopReason,
 )
 
@@ -221,6 +219,7 @@ class Robot:
         max_speed = 0.0
         max_wrench = 0.0
         prev_pos = start.tcp_position.copy()
+        prev_cmd_pos = None  # commanded TCP position from the previous tick
         t_loop = time.perf_counter()
 
         for pose, grip in interp:
@@ -237,13 +236,17 @@ class Robot:
             if grip is not None:
                 self.backend.move_gripper(grip)
 
-            # bookkeeping
-            err = float(np.linalg.norm(sr.pose[:3] - state.tcp_position))
-            max_err = max(max_err, err)
+            # bookkeeping. path_tracking_error is the lag between the PREVIOUS
+            # tick's command and the CURRENT measurement (a true residual), not
+            # the size of this tick's commanded step (skipped on the first tick).
+            if prev_cmd_pos is not None:
+                err = float(np.linalg.norm(prev_cmd_pos - state.tcp_position))
+                max_err = max(max_err, err)
             spd = float(np.linalg.norm(state.tcp_position - prev_pos)) / self.dt
             max_speed = max(max_speed, spd)
             max_wrench = max(max_wrench, float(np.max(np.abs(state.wrench))))
             prev_pos = state.tcp_position.copy()
+            prev_cmd_pos = sr.pose[:3].copy()
 
             # maintain control rate
             t_loop += self.dt

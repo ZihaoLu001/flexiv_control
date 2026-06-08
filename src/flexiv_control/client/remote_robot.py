@@ -28,7 +28,7 @@ from typing import Optional
 
 import numpy as np
 
-from ..action_chunk import CartesianChunk, ExecutionResult
+from ..action_chunk import CartesianChunk, ExecutionResult, JointChunk
 from ..types import GripperCommand, RobotState
 from ..server import protocol as P
 
@@ -45,12 +45,14 @@ class RemoteRobot:
         owner: str = "remote",
         *,
         heartbeat_period: float = 0.5,
+        heartbeat_max_failures: int = 3,
         timeout: float = 10.0,
     ):
         self.host = host
         self.port = port
         self.owner = owner
         self.heartbeat_period = heartbeat_period
+        self.heartbeat_max_failures = heartbeat_max_failures
         self.timeout = timeout
 
         self._sock: Optional[socket.socket] = None
@@ -89,6 +91,12 @@ class RemoteRobot:
         finally:
             self._sock = None
 
+    def disconnect(self) -> None:
+        """Alias for :meth:`close`; matches ``Robot.disconnect()`` so callers are
+        API-identical whether they hold a Robot or a RemoteRobot (e.g. the Gym env
+        and LeRobot adapter call ``robot.disconnect()``)."""
+        self.close()
+
     def __enter__(self) -> "RemoteRobot":
         self.connect()
         self.acquire_lease()
@@ -115,7 +123,11 @@ class RemoteRobot:
         return resp.get("result", {})
 
     # -- lease ---------------------------------------------------------------
-    def acquire_lease(self, *, force: bool = False) -> None:
+    def acquire_lease(self, owner: Optional[str] = None, *, force: bool = False) -> None:
+        # Accept a positional owner so robot.acquire_lease("mpc") works identically
+        # on Robot and RemoteRobot (no more TypeError shims at the call sites).
+        if owner is not None:
+            self.owner = owner
         self._call("acquire_lease", owner=self.owner, force=force)
         self._has_lease = True
         self._start_heartbeat()
@@ -139,14 +151,30 @@ class RemoteRobot:
             self._hb_thread = None
 
     def _heartbeat(self) -> None:
+        # Tolerate transient hiccups: a single slow/dropped heartbeat must not
+        # silently let the lease expire under a live client. Give up only after
+        # several consecutive failures, or immediately if the server actively
+        # rejects us (lease revoked) -- retrying cannot recover that.
+        consecutive_failures = 0
         while self._hb_running:
             time.sleep(self.heartbeat_period)
             if not self._hb_running:
                 break
             try:
                 self._call("heartbeat", owner=self.owner)
-            except Exception:
+                consecutive_failures = 0
+            except RemoteRobotError:
+                # Server-side rejection (e.g. lease lost/overridden): stop.
+                self._has_lease = False
+                self._hb_running = False
                 break
+            except Exception:
+                # Transient socket/timeout hiccup: tolerate a few, then give up.
+                consecutive_failures += 1
+                if consecutive_failures >= self.heartbeat_max_failures:
+                    self._has_lease = False
+                    self._hb_running = False
+                    break
 
     # -- mirror of the Robot API --------------------------------------------
     def set_safety_profile(self, name: str) -> None:
@@ -205,9 +233,19 @@ class RemoteRobot:
         )
         return P.result_from_dict(r["result"])
 
-    def execute_cartesian_chunk(self, chunk: CartesianChunk) -> ExecutionResult:
+    def execute_cartesian_chunk(
+        self, chunk: CartesianChunk, *, blocking: bool = True
+    ) -> ExecutionResult:
+        # `blocking` is accepted for signature parity with Robot; the server always
+        # executes synchronously, so it is a no-op on the wire.
         r = self._call(
             "execute_cartesian_chunk", owner=self.owner, chunk=P.chunk_to_dict(chunk)
+        )
+        return P.result_from_dict(r["result"])
+
+    def execute_joint_chunk(self, chunk: JointChunk) -> ExecutionResult:
+        r = self._call(
+            "execute_joint_chunk", owner=self.owner, chunk=P.joint_chunk_to_dict(chunk)
         )
         return P.result_from_dict(r["result"])
 

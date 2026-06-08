@@ -88,17 +88,35 @@ def rotvec_to_quat(rv: np.ndarray) -> np.ndarray:
     return np.concatenate([[np.cos(h)], np.sin(h) * axis])
 
 
-def integrate_pose(pose: np.ndarray, delta: np.ndarray) -> np.ndarray:
-    """Integrate a 6-vector delta ``[dx,dy,dz,drx,dry,drz]`` onto a 7-pose.
+def quat_rotate(q: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Rotate a 3-vector ``v`` by quaternion ``q`` (active rotation, (w,x,y,z))."""
+    q = quat_normalize(q)
+    v = np.asarray(v, float).reshape(3)
+    qv = np.concatenate([[0.0], v])
+    return quat_mul(quat_mul(q, qv), quat_conj(q))[1:]
 
-    Translation adds in the given (base) frame; rotation right-multiplies in the
-    body frame, which matches the standard OSC / delta-pose convention used by
-    robosuite-style environments.
+
+def integrate_pose(pose: np.ndarray, delta: np.ndarray, frame: str = "base") -> np.ndarray:
+    """Integrate a 6-vector delta ``[dx,dy,dz,rx,ry,rz]`` onto a 7-pose.
+
+    The rotation part ``[rx,ry,rz]`` is an axis-angle *rotation vector* and always
+    right-multiplies in the body (TCP) frame -- the standard OSC / delta-pose
+    convention used by robosuite-style environments. The translation part is
+    interpreted in ``frame``:
+
+    * ``"base"`` (default): the delta adds directly in the robot base frame.
+    * ``"tcp"``: the delta is first rotated into the base frame by the current
+      TCP orientation, so a ``+x`` delta means "forward along the gripper".
     """
     pose = np.asarray(pose, float).reshape(7)
     delta = np.asarray(delta, float).reshape(6)
     out = pose.copy()
-    out[:3] = pose[:3] + delta[:3]
+    d_trans = delta[:3]
+    if frame == "tcp":
+        d_trans = quat_rotate(pose[3:7], d_trans)
+    elif frame != "base":
+        raise ValueError(f"integrate_pose: unsupported frame {frame!r} (expected 'base' or 'tcp')")
+    out[:3] = pose[:3] + d_trans
     dq = rotvec_to_quat(delta[3:])
     out[3:7] = quat_normalize(quat_mul(pose[3:7], dq))
     return out

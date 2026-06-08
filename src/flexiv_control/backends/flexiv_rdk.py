@@ -207,12 +207,17 @@ class FlexivRdkBackend(RobotBackend):
     # -- streaming ----------------------------------------------------------
     def stream_cartesian(self, pose: np.ndarray, wrench: Optional[np.ndarray] = None) -> None:
         pose = list(np.asarray(pose, float).reshape(7))
+        # RDK v1.x Stream/SendCartesianMotionForce take wrench[6] as the 2nd arg;
+        # it only acts on axes enabled via SetForceControlAxis, so a zero default
+        # is safe for pure-motion ticks. Dropping it (pose-only) silently disabled
+        # force control during chunk execution.
+        wr = list(np.asarray(wrench, float).reshape(CART_DOF)) if wrench is not None else [0.0] * CART_DOF
         if self._mode.is_realtime:
             # RT: 1 kHz streaming, robot tracks immediately.
-            self._robot.StreamCartesianMotionForce(pose)  # VERIFY signature
+            self._robot.StreamCartesianMotionForce(pose, wr)
         else:
             # NRT: discrete target, robot's motion generator interpolates.
-            self._robot.SendCartesianMotionForce(pose)  # VERIFY signature
+            self._robot.SendCartesianMotionForce(pose, wr)
 
     def stream_joint(self, q: np.ndarray) -> None:
         q = list(np.asarray(q, float))
