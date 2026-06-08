@@ -27,8 +27,10 @@ communities actually use. They disagree on details but agree on the skeleton:
   upstreamed into LeRobot.
 - **LeRobot** (Hugging Face) — one `Robot` interface (`connect`,
   `get_observation`, `send_action`, `observation_features`/`action_features`).
-  "Bring your own hardware" and you get data collection, training, and
-  visualization for free, plus the `LeRobotDataset` format.
+  "Bring your own hardware" and you plug into LeRobot's data-collection,
+  training, and visualization tooling; emitting a `LeRobotDataset` from the
+  recorded frames is a thin caller-side step (its dataset API moves between
+  releases).
 - **SAIL** (arXiv 2506.11948) — a 4-level Franka hierarchy: policy chunk → NUC
   interpolation at 100 Hz → OSC → torque at 500 Hz — a clean illustration of the
   "chunk on top, fast servo underneath" pattern.

@@ -86,11 +86,12 @@ policy action and `intervened=True`. See [integration_teleop.md](integration_tel
 
 ## Recording datasets (LeRobot)
 
-For collecting demonstrations / logging episodes in the community-standard
-format, use the LeRobot adapter — same Cartesian-delta action as the env, so a
-policy trained in `FlexivRealEnv` records and replays unchanged. See
-[integration_teleop.md](integration_teleop.md) and `examples/06_lerobot_record.py`,
-and install with `pip install "flexiv-control[lerobot]"`.
+For collecting demonstrations / logging episodes, use the LeRobot adapter — it
+exposes the LeRobot `Robot` surface with the same Cartesian-delta action as the
+env, so a policy trained in `FlexivRealEnv` records and replays unchanged.
+Building a `LeRobotDataset` from the frames is a thin caller-side step against
+your installed `lerobot` (its dataset API varies by release). See
+`examples/06_lerobot_record.py`; install with `pip install "flexiv-control[lerobot]"`.
 
 ## Cross-machine training
 

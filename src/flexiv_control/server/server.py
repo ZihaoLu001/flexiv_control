@@ -59,17 +59,25 @@ class FlexivControlServer:
 
         class Handler(socketserver.StreamRequestHandler):
             def handle(self) -> None:
-                for line in self.rfile:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        req = P.loads(line)
-                    except Exception as e:  # malformed line
-                        self.wfile.write(P.dumps({"id": -1, "ok": False, "error": f"bad json: {e}"}))
-                        continue
-                    resp = server._dispatch(req)
-                    self.wfile.write(P.dumps(resp))
+                try:
+                    for line in self.rfile:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            req = P.loads(line)
+                        except Exception as e:  # malformed line
+                            self.wfile.write(
+                                P.dumps({"id": -1, "ok": False, "error": f"bad json: {e}"})
+                            )
+                            continue
+                        resp = server._dispatch(req)
+                        self.wfile.write(P.dumps(resp))
+                except OSError:
+                    # Client disconnected mid-request/response (BrokenPipeError,
+                    # ConnectionResetError, ...). End this connection quietly
+                    # instead of dumping a traceback via socketserver.handle_error.
+                    return
 
         socketserver.ThreadingTCPServer.allow_reuse_address = True
         self._tcp = socketserver.ThreadingTCPServer((self.host, self.port), Handler)
@@ -138,6 +146,7 @@ class FlexivControlServer:
             "servo_cartesian_delta": self._h_servo_cartesian_delta,
             "servo_cartesian_pose": self._h_servo_cartesian_pose,
             "execute_cartesian_chunk": self._h_execute_cartesian_chunk,
+            "execute_joint_chunk": self._h_execute_joint_chunk,
             "move_joint": self._h_move_joint,
             "command_gripper": self._h_command_gripper,
             "home": self._h_home,
@@ -220,6 +229,13 @@ class FlexivControlServer:
         chunk = P.chunk_from_dict(p["chunk"])
         with self._robot_lock:
             r = self.robot.execute_cartesian_chunk(chunk, blocking=True)
+        return {"result": P.result_to_dict(r)}
+
+    def _h_execute_joint_chunk(self, p: dict) -> dict:
+        self._require_lease(p)
+        chunk = P.joint_chunk_from_dict(p["chunk"])
+        with self._robot_lock:
+            r = self.robot.execute_joint_chunk(chunk)
         return {"result": P.result_to_dict(r)}
 
     def _h_move_joint(self, p: dict) -> dict:

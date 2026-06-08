@@ -5,9 +5,10 @@
 // which is enough for chunked-policy execution, MPC, and RL because the
 // hard real-time impedance loop runs *inside* the Rizon. When you need a true
 // 1 kHz host loop (high-rate streaming MPC, torque-level experiments, tight
-// contact control), this daemon provides it while speaking the *same* action
-// contract and the *same* newline-delimited-JSON wire protocol as the Python
-// server, so the Python client / Gym env / ROS overlay do not change.
+// contact control), this daemon provides it. It speaks the same
+// newline-delimited-JSON wire protocol as the Python server, but currently
+// implements only the streaming subset (set_cartesian_target / get_state /
+// stop); see cpp/README.md for the exact method set and the client notes.
 //
 // Architecture (mirrors Polymetis' C++ server and Deoxys' NUC controller):
 //
@@ -61,6 +62,7 @@ using json = nlohmann::json;
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <sys/mman.h>  // mlockall
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -75,14 +77,14 @@ void OnSignal(int) { g_stop.store(true); }
 // ---------------------------------------------------------------------------
 // SetPoint + double-buffered holder
 // ---------------------------------------------------------------------------
-// One Cartesian setpoint plus the contact-wrench feed-forward and a sequence
-// number. POD only, so the RT thread can copy it without allocating.
+// One Cartesian setpoint plus the contact-wrench feed-forward. POD only, so the
+// RT thread can copy it without allocating. (Staleness is tracked by the mailbox
+// timestamp, not a per-setpoint field.)
 struct SetPoint {
     std::array<double, kPoseDim> pose{{0.45, 0.0, 0.30, 1.0, 0.0, 0.0, 0.0}};
     std::array<double, kCartDof> wrench{{0, 0, 0, 0, 0, 0}};
     double gripper_width = -1.0;  // <0 => no gripper command this tick
     double gripper_force = 20.0;
-    uint64_t seq = 0;
 };
 
 // Lock-light single-producer/single-consumer handoff. The producer (network
@@ -219,20 +221,36 @@ void NetworkThread(int port, SetPointMailbox& mailbox, flexiv::rdk::Robot& robot
                             sp.gripper_width = p["gripper"].value("width", -1.0);
                             sp.gripper_force = p["gripper"].value("force", 20.0);
                         }
-                        sp.seq = SetPointMailbox::NowNs();
                         mailbox.Publish(sp);
                         resp["ok"] = true;
                         resp["result"] = {{"accepted", true}};
                     } else if (method == "get_state") {
-                        // VERIFY: states accessor name/shape vary by RDK version.
-                        //   recent: robot.states().tcp_pose / .q / .ext_wrench_in_world
+                        // VERIFY: states accessor/field names vary by RDK version.
+                        //   recent: robot.states().tcp_pose/.q/.dq/.tau/.tcp_vel/.ext_wrench_in_world
                         const auto st = robot.states();
+                        const double now_s =
+                            std::chrono::duration_cast<std::chrono::duration<double>>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
                         resp["ok"] = true;
+                        // Shape MUST match flexiv_control.server.protocol.state_from_dict
+                        // so the stock Python RemoteRobot can parse it.
                         resp["result"] = {
-                            {"tcp_pose", st.tcp_pose},
-                            {"q", st.q},
-                            {"wrench", st.ext_wrench_in_world},
-                        };
+                            {"state",
+                             {{"stamp", now_s},
+                              {"q", st.q},
+                              {"dq", st.dq},
+                              {"tau", st.tau},
+                              {"tcp_pose", st.tcp_pose},
+                              {"tcp_vel", st.tcp_vel},
+                              {"wrench", st.ext_wrench_in_world},
+                              {"gripper_width", 0.0},
+                              {"gripper_force", 0.0},
+                              {"gripper_is_moving", false},
+                              {"control_mode", "rt_cartesian_motion_force"},
+                              {"safety_status", "ok"},
+                              {"stop_reason", "none"},
+                              {"active_owner", ""}}}};
                     } else if (method == "stop") {
                         resp["ok"] = true;
                         resp["result"] = {{"stopping", true}};
@@ -274,6 +292,14 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, OnSignal);
     std::signal(SIGTERM, OnSignal);
+
+    // Pin all current + future pages so the 1 kHz RT thread never stalls on a
+    // lazy/major page fault. Needs RT limits / root; warn but continue if denied
+    // (the daemon still runs without it, just with more page-fault jitter).
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
+        std::cerr << "[rt_server] warning: mlockall failed (need root or "
+                     "RLIMIT_MEMLOCK); RT loop may see page-fault jitter\n";
+    }
 
     try {
         // ---- connect + enable ----------------------------------------------
@@ -342,9 +368,10 @@ int main(int argc, char** argv) {
             std::array<double, kCartDof> ff = stale
                 ? std::array<double, kCartDof>{{0, 0, 0, 0, 0, 0}}
                 : current.wrench;
-            std::vector<double> pose_v(target.begin(), target.end());
-            std::vector<double> wr_v(ff.begin(), ff.end());
-            robot.StreamCartesianMotionForce(pose_v, wr_v);
+            // RDK v1.x takes std::array<double,7>/<double,6>; pass the stack
+            // arrays directly. (The old std::vector form does not compile against
+            // v1.x and allocated on the heap every tick -- an RT violation.)
+            robot.StreamCartesianMotionForce(target, ff);
 
             last_cmd = target;
         };
@@ -354,7 +381,7 @@ int main(int argc, char** argv) {
         //   where the base tick is 1 ms, so interval=1 => 1 kHz. Older RDK used
         //   AddTask(cb, name, 1, 45, 0). Priority/affinity need root.
         flexiv::rdk::Scheduler scheduler;
-        scheduler.AddTask(rt_task, "flexiv_control_rt", 1, 45);
+        scheduler.AddTask(rt_task, "flexiv_control_rt", 1, scheduler.max_priority());
         std::cout << "[rt_server] starting " << freq << " Hz RT loop (Ctrl-C to stop)\n";
         scheduler.Start();
 

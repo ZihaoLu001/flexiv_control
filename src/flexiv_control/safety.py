@@ -19,7 +19,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from . import transforms as T
-from .types import CART_DOF, N_JOINTS_DEFAULT, RobotState, StopReason
+from .types import RobotState, StopReason
 
 
 @dataclass
@@ -191,6 +191,17 @@ class SafetyFilter:
         if lin_step / max(self.dt, 1e-9) > p.max_linear_speed:
             scale = (p.max_linear_speed * self.dt) / max(lin_step, 1e-9)
             target_pose[:3] = ref[:3] + (target_pose[:3] - ref[:3]) * scale
+            clipped = True
+
+        # 4b. Angular speed limit (per tick) against the previous command,
+        #     mirroring the linear cap so max_angular_speed is actually enforced
+        #     on raw servo/MPC/teleop setpoints (the server path feeds these
+        #     straight in with no interpolator). Without this the only angular
+        #     guard is the per-tick jump cap, which at 100 Hz permits ~15 rad/s.
+        ang_step = T.quat_angle(ref[3:7], target_pose[3:7])
+        if ang_step / max(self.dt, 1e-9) > p.max_angular_speed:
+            t = (p.max_angular_speed * self.dt) / max(ang_step, 1e-9)
+            target_pose[3:7] = T.quat_slerp(ref[3:7], target_pose[3:7], t)
             clipped = True
 
         self._prev_pose = target_pose.copy()

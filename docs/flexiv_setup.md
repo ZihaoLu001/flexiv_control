@@ -54,7 +54,7 @@ both tiers speak the same action contract and the same wire protocol.
 
 ## Configure `flexiv_control`
 
-Copy the shipped template and edit it for your arm. `configs/robots/rizon4s_lab.yaml`:
+Copy the shipped template and edit it for your arm. `src/flexiv_control/configs/robots/rizon4s_lab.yaml`:
 
 ```yaml
 robot_id: rizon4s_lab
@@ -70,7 +70,9 @@ q_home: [0.0, -0.7, 0.0, 1.6, 0.0, 0.9, 0.0]
 The fields map directly to `RobotConfig`: `backend`, `robot_sn` (note: *sn*, not
 `serial`), `gripper_name`, `control_hz`, `default_safety_profile`, `q_home`.
 
-Then connect by config name (it is searched under `configs/robots/`) or by path:
+Then connect by config name (the shipped templates are searched under
+`src/flexiv_control/configs/robots/`; set `FLEXIV_CONTROL_CONFIGS` to point at
+your own config directory) or by path:
 
 ```python
 from flexiv_control import Robot

@@ -54,8 +54,8 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# If you build a wheel and want the YAML configs bundled, copy configs/ to
-# src/flexiv_control/configs/ first; config resolution checks that location too.
+# The YAML config templates live inside the package (src/flexiv_control/configs/)
+# so they ship in the wheel; config.py resolves profile names against that dir.
 [tool.setuptools.package-data]
 flexiv_control = ["configs/**/*.yaml"]
 

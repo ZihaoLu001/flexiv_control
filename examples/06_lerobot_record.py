@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""06 - Record data in the LeRobot format.
+"""06 - Drive the LeRobot adapter surface (demo).
 
-The LeRobot adapter makes a Flexiv arm look like a ``lerobot`` robot, so you get
-HuggingFace's data-collection, training, visualization and dataset tooling
-(``LeRobotDataset``, MP4 + Parquet) "for free". This is the single biggest lever
-for sharing data and policies with the wider community.
+The LeRobot adapter makes a Flexiv arm look like a ``lerobot`` robot, so it plugs
+into HuggingFace's data-collection, training, and visualization tooling. This
+example demonstrates the adapter's record-loop surface; it does **not** itself
+write a ``LeRobotDataset`` -- turning the collected frames into a dataset
+(MP4 + Parquet) is a thin step against your installed ``lerobot`` version (whose
+dataset API moves between releases), sketched in the notes below.
 
     pip install "flexiv-control[lerobot]"
     python examples/06_lerobot_record.py
@@ -13,11 +15,12 @@ This example shows the adapter's ``connect / get_observation / send_action``
 surface and a minimal record loop. If ``lerobot`` is not installed it falls back
 to printing the frames it *would* log, so it still runs on the fake backend.
 
-    observation_features: q, dq, tcp_pose, wrench, gripper_width
-    action_features:      action(7) = [dx, dy, dz, droll, dpitch, dyaw, gripper]
+    observation_features: q.0..6, dq.0..6, tcp_pose.0..6, wrench.0..5, gripper_width
+    action_features:      dx, dy, dz, droll, dpitch, dyaw, gripper
+    (LeRobot aggregates these flat float keys into observation.state / action.)
 
-NOTE: feature names/dtypes are marked ``# VERIFY:`` in the adapter -- pin them to
-your installed LeRobot version before recording a real dataset.
+NOTE: build the LeRobotDataset with YOUR installed lerobot's dataset API; its
+schema / recording helpers differ across releases.
 """
 
 import numpy as np
@@ -50,8 +53,10 @@ def main() -> None:
         try:
             import lerobot  # noqa: F401
 
-            print("lerobot is installed: wrap `frames` in a LeRobotDataset to save "
-                  "(see docs/integration_rl.md).")
+            print("lerobot is installed. This example does NOT build a dataset; "
+                  "to persist `frames`, create a LeRobotDataset and add_frame() "
+                  "each (obs, action) with a per-frame task string, using the "
+                  "dataset API of YOUR lerobot version (it differs across releases).")
         except Exception:
             print("(lerobot not installed -> frames printed only; install "
                   "flexiv-control[lerobot] to write a real dataset.)")

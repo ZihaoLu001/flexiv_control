@@ -1,12 +1,12 @@
 """A LeRobot ``Robot``-interface adapter for the Flexiv controller.
 
 LeRobot (HuggingFace) is the de-facto community hub for robot-learning data and
-policies. Conforming to its "Bring Your Own Hardware" ``Robot`` interface gives
-every Flexiv user -- in this lab and beyond -- free LeRobot data collection,
-dataset recording (the standard MP4 + Parquet ``LeRobotDataset`` format),
-policy training, and visualization, without writing any LeRobot glue. This is
-the highest-leverage piece for the broader research community, which is why it
-ships in the core repo.
+policies. Conforming to its "Bring Your Own Hardware" ``Robot`` interface lets a
+Flexiv arm plug into LeRobot's data-collection, training, and visualization
+tooling. This adapter exposes the LeRobot ``Robot`` surface; turning the recorded
+frames into a ``LeRobotDataset`` (MP4 + Parquet) is a thin extra step on the
+caller's side against their installed ``lerobot`` version (the dataset API moves
+between releases -- see ``examples/06_lerobot_record.py``).
 
 This adapter exposes the documented LeRobot ``Robot`` surface -- ``connect`` /
 ``disconnect`` / ``get_observation`` / ``send_action`` plus ``observation_features``
@@ -63,33 +63,40 @@ class LeRobotFlexivAdapter:
         self.owner = owner
         self._connected = False
 
-    # -- LeRobot feature schema (VERIFY: against your lerobot version) -------
-    @property
-    def observation_features(self) -> Dict[str, dict]:
-        def f(shape):  # LeRobot-style feature descriptor
-            return {"dtype": "float32", "shape": (shape,), "names": None}
+    # -- LeRobot feature schema ---------------------------------------------
+    # LeRobot's modern Robot interface wants FLAT, bare per-scalar keys whose
+    # value is the Python type ``float`` (cf. SOFollower's ``{f"{m}.pos": float}``).
+    # LeRobot itself adds the ``observation.``/``action.`` prefix and aggregates
+    # the float keys into a single ``observation.state`` / ``action`` vector
+    # (names = the bare keys) via hw_to_dataset_features. get_observation /
+    # send_action below return one scalar per key so build_dataset_frame can
+    # index each by name.
+    _OBS_KEYS = (
+        [f"q.{i}" for i in range(7)]
+        + [f"dq.{i}" for i in range(7)]
+        + [f"tcp_pose.{i}" for i in range(7)]
+        + [f"wrench.{i}" for i in range(6)]
+        + ["gripper_width"]
+    )
+    _ACTION_KEYS = ("dx", "dy", "dz", "droll", "dpitch", "dyaw", "gripper")
 
-        return {
-            "observation.state.q": f(7),
-            "observation.state.dq": f(7),
-            "observation.state.tcp_pose": f(7),
-            "observation.state.wrench": f(6),
-            "observation.state.gripper_width": f(1),
-        }
+    @property
+    def observation_features(self) -> Dict[str, type]:
+        return {k: float for k in self._OBS_KEYS}
 
     @property
-    def action_features(self) -> Dict[str, dict]:
-        return {
-            "action": {
-                "dtype": "float32",
-                "shape": (7,),
-                "names": ["dx", "dy", "dz", "droll", "dpitch", "dyaw", "gripper"],
-            }
-        }
+    def action_features(self) -> Dict[str, type]:
+        return {k: float for k in self._ACTION_KEYS}
 
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def is_calibrated(self) -> bool:
+        # Rizon is factory-calibrated; calibrate() is a no-op, so report True to
+        # let LeRobot's connect() skip self.calibrate().
+        return True
 
     # -- lifecycle -----------------------------------------------------------
     def connect(self, calibrate: bool = True) -> None:  # noqa: ARG002
@@ -127,21 +134,29 @@ class LeRobotFlexivAdapter:
         """No-op hook for LeRobot compatibility."""
 
     # -- observation / action ------------------------------------------------
-    def get_observation(self) -> Dict[str, np.ndarray]:
+    def get_observation(self) -> Dict[str, float]:
+        # One scalar per bare key, matching observation_features, so LeRobot's
+        # build_dataset_frame can index each by name into observation.state.
         s = self.robot.get_state()
-        return {
-            "observation.state.q": s.q.astype(np.float32),
-            "observation.state.dq": s.dq.astype(np.float32),
-            "observation.state.tcp_pose": s.tcp_pose.astype(np.float32),
-            "observation.state.wrench": s.wrench.astype(np.float32),
-            "observation.state.gripper_width": np.array([s.gripper_width], np.float32),
-        }
+        obs: Dict[str, float] = {}
+        for i in range(7):
+            obs[f"q.{i}"] = float(s.q[i])
+        for i in range(7):
+            obs[f"dq.{i}"] = float(s.dq[i])
+        for i in range(7):
+            obs[f"tcp_pose.{i}"] = float(s.tcp_pose[i])
+        for i in range(6):
+            obs[f"wrench.{i}"] = float(s.wrench[i])
+        obs["gripper_width"] = float(s.gripper_width)
+        return obs
 
     def send_action(
-        self, action: Union[np.ndarray, Dict[str, np.ndarray]]
-    ) -> Dict[str, np.ndarray]:
+        self, action: Union[np.ndarray, Dict[str, float]]
+    ) -> Dict[str, float]:
+        # Accept a 7-vector or a per-key dict ({"dx":.., .., "gripper":..}); return
+        # one scalar per action key so the recorded action frame matches features.
         if isinstance(action, dict):
-            a = np.asarray(action["action"], float).reshape(7)
+            a = np.asarray([action[k] for k in self._ACTION_KEYS], float)
         else:
             a = np.asarray(action, float).reshape(7)
         a = np.clip(a, -1.0, 1.0)
@@ -151,20 +166,17 @@ class LeRobotFlexivAdapter:
         width = float(np.clip((a[6] + 1.0) / 2.0, 0.0, 1.0)) * self.gripper_open_width
         grip = GripperCommand(width=width, force=20.0, grasp=a[6] < 0)
         self.robot.servo_cartesian_delta(delta, duration=self.step_duration, gripper=grip)
-        return {"action": a.astype(np.float32)}
+        return {k: float(v) for k, v in zip(self._ACTION_KEYS, a)}
 
 
 def register_with_lerobot() -> bool:
-    """Best-effort registration with an installed LeRobot. Returns success.
+    """Attempt to register the adapter with an installed LeRobot.
 
-    LeRobot's registration mechanism varies by version; this tries the common
-    entry point and fails soft. Most users can simply *use* the adapter object
-    directly without registering.
+    NOT IMPLEMENTED: current LeRobot has no stable runtime "register a robot"
+    call -- hardware is registered via a config dataclass decorated with
+    ``@RobotConfig.register_subclass("flexiv_rizon")`` plus the
+    ``make_robot_from_config`` factory, so there is nothing to invoke at runtime
+    here. Use :class:`LeRobotFlexivAdapter` directly; it implements the full
+    LeRobot ``Robot`` surface. Returns ``False`` (no registration performed).
     """
-    try:  # pragma: no cover - depends on lerobot being installed
-        import lerobot  # noqa: F401
-
-        # VERIFY: LeRobot's robot registry API differs across releases.
-        return True
-    except Exception:
-        return False
+    return False

@@ -107,6 +107,7 @@ pip install -e ".[rl]"              # + Gymnasium env
 pip install -e ".[teleop]"          # + SpaceMouse
 pip install -e ".[lerobot]"         # + LeRobot data/training/viz
 pip install -e ".[mujoco]"          # + MuJoCo backend
+pip install -e ".[yaml]"            # + PyYAML for richer configs (a mini-parser is built in)
 pip install -e ".[flexiv]"          # + flexivrdk (real hardware; pin to your robot's version)
 pip install -e ".[dev]"             # + pytest, ruff
 ```
@@ -125,9 +126,11 @@ the 1 kHz servoing. That gives two tiers that share everything above the backend
 | License | **Standard** | **Professional** |
 | Good for | planner chunks, MPC, RL | high-rate streaming MPC, tight contact, torque research |
 
-Both speak the **same action contract and the same wire protocol**, so the
-Python client / Gym env / ROS overlay do not change when you move from A to B.
-Start on Tier A. See [docs/architecture.md](docs/architecture.md) and
+Both speak the **same action contract and the same wire protocol**. The Python
+client / Gym env / ROS overlay are written against that one contract; the Tier-B
+daemon currently implements the streaming subset of it (`set_cartesian_target` /
+`get_state` / `stop`), with the rest a purely-additive roadmap item. Start on
+Tier A. See [docs/architecture.md](docs/architecture.md) and
 [`cpp/README.md`](cpp/README.md).
 
 ## ◳ The contract is the spine
@@ -177,7 +180,7 @@ src/flexiv_control/      core library (contract, safety, interpolation, robot fa
   server/  client/       optional cross-process server + RemoteRobot
   envs/    adapters/      Gymnasium env + LeRobot adapter
   teleop/                 SpaceMouse teleop / RL intervention
-configs/                 robot + safety + control YAMLs (edit for your cell)
+  configs/               shipped robot + safety + control YAML templates (copy + edit for your cell)
 cpp/                     optional Tier-B 1 kHz RT daemon
 ros2/                    optional ROS 2 overlay (msgs + bringup, MoveIt-Servo jog)
 docs/                    the docs above (+ the GitHub Pages landing page)

@@ -54,9 +54,10 @@ That gives two tiers that share *everything* above the backend:
 - **Tier B — C++ 1 kHz daemon, optional upgrade.** When you need a true 1 kHz
   *host* loop (high-rate streaming MPC, torque research, tight contact), the C++
   `rt_server` (`cpp/`) uses `flexiv::rdk::Scheduler` and the RDK **real-time**
-  modes. It speaks the **same wire protocol** as the Python server, so the
-  Python client / Gym env / ROS overlay don't change. Needs a real-time kernel,
-  root, and the **Professional** RDK license.
+  modes. It speaks the **same wire protocol** as the Python server (today only
+  the streaming subset — `set_cartesian_target`/`get_state`/`stop`; the rest is a
+  purely-additive roadmap item). Needs a real-time kernel, root, and the
+  **Professional** RDK license.
 
 You start on Tier A and only reach for Tier B if a measurement says you must.
 See [design_rationale.md](design_rationale.md) for why this beats a

@@ -19,7 +19,6 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
-from ..action_chunk import CartesianDelta
 from ..config import RobotConfig
 from ..robot import Robot
 from ..types import GripperCommand
@@ -148,8 +147,10 @@ class FlexivRealEnv(_EnvBase):
 
     # -- gym API -------------------------------------------------------------
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
-        if seed is not None:
-            np.random.seed(seed)
+        if HAVE_GYM:
+            # Seed self.np_random + run gym's reset bookkeeping (the Gymnasium
+            # contract). Do NOT touch the global np.random RNG.
+            super().reset(seed=seed)
         self._ensure_connected()
         self.robot.start_cartesian_impedance()
         if self.home_pose is not None:

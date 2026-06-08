@@ -14,8 +14,12 @@ when you genuinely need a **true 1 kHz host loop**:
 - torque-level research (extend this daemon; it ships Cartesian-only by design).
 
 `rt_server` speaks the **same newline-delimited-JSON wire protocol** as the
-Python `FlexivControlServer`, so your existing Python client, Gym env, and ROS 2
-overlay talk to it unchanged — only the executor underneath is different.
+Python `FlexivControlServer`, but today it implements only the **streaming
+subset** (`set_cartesian_target` / `get_state` / `stop`). The stock `RemoteRobot`
+client does not yet drive it (its `connect()`/lease handshake calls methods the
+daemon does not implement), so for now use a small custom socket client that
+speaks those three verbs. Adding the remaining handlers (lease no-ops + the
+client's streaming verbs) is purely additive.
 
 ## What it does
 
@@ -64,11 +68,14 @@ make -j
 sudo ./build/rt_server <ROBOT_SERIAL> --port 8766 --freq 1000
 ```
 
-Then from Python, point a `RemoteRobot` at it exactly as you would the Python
-server. (Today the daemon implements the streaming subset —
-`set_cartesian_target`, `get_state`, `stop`. The full method set / a thin
-client shim for the rest is on the roadmap; the protocol is identical, so it is
-purely additive.)
+Then drive it from Python over the same JSON/TCP protocol. Note: the stock
+`flexiv_control.RemoteRobot` does **not** work against this daemon yet — its
+`connect()` sends `ping` and its context-manager `__enter__` acquires a lease,
+neither of which the daemon implements, so those calls return `{"ok": false}`.
+Until the lease/handshake handlers are added (purely additive), drive the daemon
+with a custom client that speaks `set_cartesian_target` / `get_state` / `stop`
+directly. Its `get_state` reply is shaped like the Python server's, so parsing it
+with `flexiv_control.server.protocol.state_from_dict` works.
 
 ## ⚠️ Version-sensitive API
 

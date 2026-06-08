@@ -21,7 +21,6 @@ from . import transforms as T
 from .action_chunk import (
     CartesianChunk,
     CartesianDelta,
-    CartesianWaypoint,
     JointChunk,
 )
 from .types import GripperCommand
@@ -132,5 +131,9 @@ class JointChunkInterpolator:
 
 
 def delta_to_target_pose(delta: CartesianDelta, current_pose: np.ndarray) -> np.ndarray:
-    """Integrate a relative delta onto the current pose -> absolute target."""
-    return T.integrate_pose(current_pose, delta.delta)
+    """Integrate a relative delta onto the current pose -> absolute target.
+
+    Honours ``delta.frame`` ("base" or "tcp") so end-effector-relative servoing
+    (the natural SpaceMouse / "move forward along the gripper" mode) is correct.
+    """
+    return T.integrate_pose(current_pose, delta.delta, frame=delta.frame)

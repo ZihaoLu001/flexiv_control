@@ -33,10 +33,10 @@ result = robot.execute_cartesian_chunk(chunk)
 
 `n_j` becomes a duration at the active control rate (`duration = n_j /
 control_hz`), so the same `u` runs identically whether you execute at 100 Hz
-(Tier A) or 1 kHz (Tier B). Orientation is held by default, matching
-position-only `(x, y, z)` waypoints; pass `hold_orientation=False` and supply
-quaternions if your planner emits orientation. See
-[action_contract.md](action_contract.md).
+(Tier A) or 1 kHz (Tier B). `from_waypoint_array` is position-only, so
+orientation is always held; if your planner emits orientation, build full-SE(3)
+`CartesianWaypoint`s with quaternions and pass them to `CartesianChunk(...)`
+directly. See [action_contract.md](action_contract.md).
 
 ## 2. Receding horizon: execute the first segment, then replan
 

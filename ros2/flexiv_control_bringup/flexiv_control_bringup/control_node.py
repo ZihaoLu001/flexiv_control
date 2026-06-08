@@ -165,13 +165,25 @@ class FlexivControlNode(Node):
 
     # -- services ------------------------------------------------------------
     def _on_set_mode(self, req: SetMode.Request, resp: SetMode.Response):
+        # The facade exposes only impedance starts, so dispatch the documented
+        # ControlMode names explicitly and reject anything we cannot honour,
+        # rather than silently collapsing every request to impedance.
         try:
-            if "JOINT" in req.mode.upper():
-                self.robot.start_joint_impedance(realtime=req.realtime)
+            name = req.mode.strip().upper()
+            realtime = bool(req.realtime) or name.startswith("RT_")
+            if name in ("NRT_JOINT_IMPEDANCE", "RT_JOINT_IMPEDANCE"):
+                self.robot.start_joint_impedance(realtime=realtime)
+            elif name in ("NRT_CARTESIAN_MOTION_FORCE", "RT_CARTESIAN_MOTION_FORCE"):
+                self.robot.start_cartesian_impedance(realtime=realtime)
             else:
-                self.robot.start_cartesian_impedance(realtime=req.realtime)
+                resp.ok = False
+                resp.message = (
+                    f"unsupported mode '{req.mode}'; this bridge can start only "
+                    "NRT/RT_JOINT_IMPEDANCE or NRT/RT_CARTESIAN_MOTION_FORCE"
+                )
+                return resp
             resp.ok = True
-            resp.message = f"mode set ({req.mode}, realtime={req.realtime})"
+            resp.message = f"mode set ({name}, realtime={realtime})"
         except Exception as e:  # noqa: BLE001
             resp.ok = False
             resp.message = str(e)
@@ -216,11 +228,21 @@ class FlexivControlNode(Node):
 
         chunk = CartesianChunk(waypoints=waypoints, frame=g.frame or "base")
 
-        # Execute. (The chunk runs synchronously in this action thread; the
-        # ReentrantCallbackGroup keeps state publishing alive meanwhile.)
+        # Execute. The backend runs the chunk synchronously (atomic; no per-tick
+        # hook), so we cannot interrupt mid-chunk. Honour an accepted cancel by
+        # stopping and reporting CANCELED instead of falsely returning SUCCEEDED.
         result_msg = ExecuteCartesianChunk.Result()
         res = self.robot.execute_cartesian_chunk(chunk)
 
+        if goal_handle.is_cancel_requested:
+            self.robot.stop()
+            goal_handle.canceled()
+            result_msg.success = False
+            result_msg.stop_reason = "canceled"
+            return result_msg
+
+        # The chunk is atomic, so there is no progressive per-tick feedback;
+        # publish one terminal feedback with the final pose.
         fb = ExecuteCartesianChunk.Feedback()
         fb.tick = 1
         fb.current_pose = res.final_state.tcp_pose.tolist()

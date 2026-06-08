@@ -18,9 +18,10 @@ command buffer -- the realtime-buffer pattern used by ros2_control / Polymetis.
 
 from __future__ import annotations
 
+import copy
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -79,8 +80,13 @@ class ReactiveServoLoop:
 
     # -- introspection -------------------------------------------------------
     def get_state(self) -> RobotState:
-        s = self._latest_state or self.backend.read_state()
-        st = self._stats
+        # Snapshot the loop's latest state under the lock, then stamp diagnostics
+        # onto a shallow copy so a reader never mutates the object the loop thread
+        # still holds (cross-thread in-place mutation of shared state).
+        with self._lock:
+            base = self._latest_state
+            st = self._stats
+        s = self.backend.read_state() if base is None else copy.copy(base)
         s.loop_period_ms = st.period_ms
         s.loop_jitter_us = st.jitter_us
         s.missed_cycles = st.missed_cycles
@@ -126,9 +132,7 @@ class ReactiveServoLoop:
     def _run(self) -> None:
         next_tick = time.perf_counter()
         prev_tick = next_tick
-        timeout_s = self.filter.p.command_timeout_ms / 1000.0
         while self._running:
-            t0 = time.perf_counter()
             state = self.backend.read_state()
             self._latest_state = state
 
@@ -141,8 +145,12 @@ class ReactiveServoLoop:
 
             self._stats.command_age_ms = age * 1000.0
 
-            stale = age > timeout_s
-            if stale and self.filter.p.stop_on_stale_command:
+            # Read the watchdog from the LIVE profile each tick so a mid-run
+            # set_safety_profile() swap applies both the timeout and the flag
+            # consistently (they used to diverge: flag live, timeout cached).
+            p = self.filter.p
+            stale = age > (p.command_timeout_ms / 1000.0)
+            if stale and p.stop_on_stale_command:
                 # Hold position: re-issue the *current measured* pose, don't
                 # keep tracking an old setpoint. Re-anchor the filter so the
                 # next live command is referenced to where we actually are.

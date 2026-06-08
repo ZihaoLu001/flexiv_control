@@ -57,7 +57,8 @@ a motion down rather than truncating it. See
 
 ## The four shipped profiles
 
-Under `configs/safety/`:
+Under `src/flexiv_control/configs/safety/` (point `FLEXIV_CONTROL_CONFIGS` at
+your own directory to override the search path):
 
 | Profile | For | Character |
 |---|---|---|
@@ -112,7 +113,7 @@ Any omitted field falls back to the dataclass default in
 3. **Set the contact stop below what hurts.** For tabletop work 40 N is a sane
    ceiling; lower it for delicate setups. For deliberate contact tasks use
    `contact_manipulation` and raise it knowingly.
-4. **Copy, don't edit in place.** Make `configs/safety/mylab_tabletop.yaml`,
+4. **Copy, don't edit in place.** Make your own `safety/mylab_tabletop.yaml`,
    commit it, and reference it by path or name. Point `FLEXIV_CONTROL_CONFIGS`
    at your own config directory to override the shipped ones without touching
    this repo.
