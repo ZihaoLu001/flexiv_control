@@ -29,6 +29,7 @@ from ..types import (
     JointImpedanceParams,
     RobotState,
     SafetyStatus,
+    StopReason,
 )
 from .base import RobotBackend
 
@@ -60,6 +61,9 @@ class FakeBackend(RobotBackend):
         self._gripper_moving = False
         self._impedance = ImpedanceParams()
         self._max_wrench = np.array([40, 40, 40, 5, 5, 5], float)
+        # Test hook: set True to simulate a robot-side fault (the control loop
+        # polls in_fault() every tick and must halt).
+        self._fault = False
 
         # Recorded command log (for tests / debugging).
         self.cartesian_log: List[np.ndarray] = []
@@ -92,8 +96,12 @@ class FakeBackend(RobotBackend):
             gripper_force=self._gripper_force,
             gripper_is_moving=self._gripper_moving,
             control_mode=self._mode,
-            safety_status=SafetyStatus.OK,
+            safety_status=SafetyStatus.FAULT if self._fault else SafetyStatus.OK,
+            stop_reason=StopReason.BACKEND_FAULT if self._fault else StopReason.NONE,
         )
+
+    def in_fault(self) -> bool:
+        return self._fault
 
     # -- mode ---------------------------------------------------------------
     def set_mode(
@@ -144,3 +152,9 @@ class FakeBackend(RobotBackend):
             if q_home is not None
             else np.array([0.0, -0.7, 0.0, 1.6, 0.0, 0.9, 0.0])
         )
+        # Mirror the real backend: homing runs the NRT 'Home' primitive and
+        # leaves the robot in NRT_PRIMITIVE mode. Tracking this in the fake lets
+        # offline tests catch mode-sequencing bugs (e.g. a reset() that homes
+        # last and never re-enters a motion mode before step()).
+        self._mode = ControlMode.NRT_PRIMITIVE
+        self.mode_log.append(self._mode)

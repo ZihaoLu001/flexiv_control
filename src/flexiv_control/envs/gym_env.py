@@ -152,11 +152,17 @@ class FlexivRealEnv(_EnvBase):
             # contract). Do NOT touch the global np.random RNG.
             super().reset(seed=seed)
         self._ensure_connected()
-        self.robot.start_cartesian_impedance()
+        # reset() must END in the Cartesian motion-force mode that step() needs.
+        # robot.home() runs the NRT 'Home' primitive and leaves the real backend
+        # in NRT_PRIMITIVE, so homing must come BEFORE entering impedance -- the
+        # old order (impedance then home) left the arm in primitive mode and the
+        # first step()'s Cartesian command would be rejected on hardware.
         if self.home_pose is not None:
+            self.robot.start_cartesian_impedance()
             self.robot.servo_cartesian_pose(self.home_pose, duration=2.0)
         else:
             self.robot.home()
+            self.robot.start_cartesian_impedance()
         self._elapsed = 0
         return self._obs(), {}
 

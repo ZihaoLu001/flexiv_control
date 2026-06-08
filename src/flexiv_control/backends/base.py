@@ -82,6 +82,17 @@ class RobotBackend(abc.ABC):
     @abc.abstractmethod
     def stop(self) -> None: ...
 
+    def in_fault(self) -> bool:
+        """Whether the robot is in a fault / protective-stop state.
+
+        The single-writer control loop polls this EVERY tick and halts streaming
+        if it returns True -- a robot-side fault (collision reflex, joint-limit
+        protective stop, E-stop) is invisible to the host-side safety filter, so
+        it must be surfaced here. Hardware backends override it (e.g. RDK
+        ``robot.fault()``); sim/fake backends are never faulted unless a test
+        injects one, so the default is False."""
+        return False
+
     def home(self, q_home: Optional[np.ndarray] = None) -> None:
         """Default home via the joint path; backends may override with a
         vendor primitive (e.g. RDK ``NRT_PRIMITIVE_EXECUTION`` 'Home')."""
