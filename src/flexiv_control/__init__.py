@@ -24,7 +24,7 @@ Quick start (no hardware needed)::
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # --- core data types
 from .types import (  # noqa: F401
@@ -57,10 +57,10 @@ from .config import RobotConfig, load_safety_profile  # noqa: F401
 from .backends import FakeBackend, RobotBackend, get_backend  # noqa: F401
 
 # --- the one facade
-from .robot import LeaseError, Robot  # noqa: F401
+from .robot import ChunkStoppedError, LeaseError, Robot  # noqa: F401
 
 # --- receding-horizon / VLA policy-server seam
-from .recede import RecedingHorizonRunner  # noqa: F401
+from .recede import RecedingHorizonRunner, console_confirm  # noqa: F401
 from .policy_client import RemotePolicyClient  # noqa: F401
 
 __all__ = [
@@ -94,9 +94,11 @@ __all__ = [
     # facade
     "Robot",
     "LeaseError",
+    "ChunkStoppedError",
     # receding horizon
     "RecedingHorizonRunner",
     "RemotePolicyClient",
+    "console_confirm",
 ]
 
 

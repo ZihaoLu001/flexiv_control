@@ -28,7 +28,7 @@ from typing import Optional
 import numpy as np
 
 from ..robot import Robot
-from ..types import GripperCommand, RobotState, SafetyStatus, StopReason
+from ..types import ControlMode, GripperCommand, RobotState, SafetyStatus, StopReason
 
 
 @dataclass
@@ -145,6 +145,15 @@ class ReactiveServoLoop:
             return
         # Seed the target with the current pose so we hold on startup.
         s = self.backend.read_state()
+        # The loop's default duty is a Cartesian hold/stream; backends require a
+        # Cartesian motion mode before streaming (the fake enforces this exactly
+        # like the real RDK), so ensure it here rather than depending on the
+        # client having remembered start_cartesian_impedance(). No _wlock here:
+        # the server calls start() while already holding that (non-reentrant)
+        # lock, and standalone there is no other writer yet.
+        if not s.control_mode.is_cartesian:
+            self.robot.start_cartesian_impedance()
+            s = self.backend.read_state()
         self.filter.reset(s)
         with self._lock:
             self._target_pose = s.tcp_pose.copy()
@@ -171,8 +180,45 @@ class ReactiveServoLoop:
     def __exit__(self, *exc) -> None:
         self.stop()
 
+    def _ensure_stream_mode(self, state: RobotState, cartesian: bool) -> None:
+        """Backends require a matching motion mode before streaming (the fake
+        enforces this like the real RDK). The loop can find itself out of mode
+        after a protective stop (-> IDLE) or when the target type flips between
+        Cartesian and joint, so re-ensure right before streaming. Must be called
+        under ``self._wlock`` (every stream site already is)."""
+        if cartesian:
+            if not state.control_mode.is_cartesian:
+                self.robot.start_cartesian_impedance()
+        else:
+            if state.control_mode.is_cartesian or state.control_mode == ControlMode.IDLE:
+                self.robot.start_joint_impedance()
+
+    @property
+    def alive(self) -> bool:
+        """True while the writer thread is running. A dead loop must not be
+        streamed into: ``servo_stream`` keeps 'succeeding' otherwise while
+        nothing reaches the robot and the hold-watchdog (which IS this loop)
+        is gone."""
+        return self._running and self._thread is not None and self._thread.is_alive()
+
     # -- the loop ------------------------------------------------------------
     def _run(self) -> None:
+        try:
+            self._run_inner()
+        except Exception:
+            # The writer thread must never die silently: stop the backend
+            # best-effort, mark the fault, and de-register liveness so
+            # servo_stream callers get a loud error instead of a black hole.
+            try:
+                self.backend.stop()
+            except Exception:
+                pass
+            self._stats.last_status = SafetyStatus.FAULT
+            self._stats.last_stop_reason = StopReason.BACKEND_FAULT
+            self._running = False
+            raise
+
+    def _run_inner(self) -> None:
         next_tick = time.perf_counter()
         prev_tick = next_tick
         while self._running:
@@ -249,6 +295,7 @@ class ReactiveServoLoop:
                         # next live command is referenced to where we actually are.
                         self._stats.last_status = SafetyStatus.HOLDING
                         self.filter.reset(state)
+                        self._ensure_stream_mode(state, cartesian)
                         if cartesian:
                             self.backend.stream_cartesian(state.tcp_pose)
                         else:
@@ -257,6 +304,7 @@ class ReactiveServoLoop:
                     if cartesian and target_pose is not None:
                         sr = self.filter.filter_cartesian(target_pose, state)
                         if sr.ok:
+                            self._ensure_stream_mode(state, cartesian=True)
                             self.backend.stream_cartesian(sr.pose)
                             if gripper is not None:
                                 self.backend.move_gripper(gripper)
@@ -276,6 +324,7 @@ class ReactiveServoLoop:
                     elif not cartesian and target_q is not None:
                         sr = self.filter.filter_joint(target_q, state)
                         if sr.ok:
+                            self._ensure_stream_mode(state, cartesian=False)
                             self.backend.stream_joint(sr.q)
                             self._stats.last_clipped = sr.clipped
                             self._stats.last_status = (

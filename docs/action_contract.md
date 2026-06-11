@@ -61,17 +61,37 @@ manipulation, and high-level RL.
 ```python
 CartesianChunk(
     waypoints,                       # List[CartesianWaypoint], >= 1
-    impedance=ImpedanceParams(),     # compliance for the whole chunk
+    impedance=ImpedanceParams(),     # compliance (applied when the executor
+                                     #   auto-starts the Cartesian mode)
     force_control=None,              # ForceControlParams or None
-    max_tcp_linear_speed=0.25,       # m/s     } kinematic envelope enforced by
-    max_tcp_angular_speed=0.60,      # rad/s   } the interpolator + safety filter
-    max_tcp_linear_acc=1.0,          # m/s^2
-    max_tcp_angular_acc=2.0,         # rad/s^2
-    max_contact_wrench=None,         # [fx,fy,fz,tx,ty,tz]; None -> profile default
-    safety_profile="tabletop_safe",  # named profile loaded before executing
+    max_tcp_linear_speed=0.25,       # m/s    } TIGHTENING-ONLY: the executor runs
+    max_tcp_angular_speed=0.60,      # rad/s  } at min(chunk cap, profile cap)
+    max_tcp_linear_acc=1.0,          # m/s^2  } ADVISORY metadata only (the
+    max_tcp_angular_acc=2.0,         # rad/s^2} profile's max_linear_accel binds)
+    max_contact_wrench=None,         # [fx,..]; min(chunk, profile); None -> profile
+    safety_profile="",               # "" = run under the active profile; a
+                                     #   non-empty name is VERIFIED against the
+                                     #   active profile (mismatch raises) and both
+                                     #   are recorded in ExecutionResult.log
     frame="base",
 )
 ```
+
+Execution notes:
+
+- `execute_cartesian_chunk` **auto-ensures the NRT Cartesian impedance mode**
+  (with the chunk's `impedance`) when the backend is not already in a Cartesian
+  mode, so a missing `start_cartesian_impedance()` is no longer a
+  hardware-only failure.
+- Segments whose implied speed exceeds the effective cap are **time-stretched**
+  by the interpolator (the chunk still reaches its waypoints, just no faster
+  than the cap) -- wall-clock execution can exceed the nominal
+  `total_duration`. Use `ExecutionResult.executed_duration` for the truth, or
+  estimate ahead with the active profile's caps
+  (`RemoteRobot.get_safety_profile()`).
+- Preflight a chunk against the active envelope with
+  `profile.validate_chunk(chunk)` instead of duplicating workspace constants
+  client-side.
 
 Helpful attributes: `chunk.horizon` (number of waypoints) and
 `chunk.total_duration(control_hz)`.
@@ -156,7 +176,7 @@ JointWaypoint(positions, n_frames=None, duration=None)   # give one of the two
 JointChunk(
     waypoints,                      # List[JointWaypoint], >= 1
     max_joint_speed_scale=0.3,      # fraction of nominal joint-velocity limits
-    safety_profile="tabletop_safe",
+    safety_profile="",              # same semantics as CartesianChunk: "" = active
 )
 ```
 
@@ -179,6 +199,20 @@ GripperCommand(
 # normalized learning-layer command [0,1] -> physical width (pass your stroke):
 GripperCommand.from_normalized(0.7, span=0.08)   # width = 0.7 * 0.08 m
 ```
+
+**`grasp=True` ignores `width` on hardware**: the RDK backend calls
+`Gripper.Grasp(force)` and the fingers close until contact at the force limit
+-- a planner that encodes close-intent by thresholding width must not expect
+the commanded width to be tracked. The MuJoCo backend mirrors this (a grasp
+command drives the fingers closed and contact physics stops them), so sim and
+real agree. Gripper RPCs are fire-and-forget by default; use
+`command_gripper(cmd, wait=True)` to block until the fingers settle (no more
+do-nothing hold-pose chunks as a wait workaround).
+
+A gripper command embedded in a chunk waypoint is emitted on the FIRST tick of
+that waypoint's segment and runs concurrently with the motion toward the
+waypoint -- give the gripper its own (near-)stationary waypoint when you need
+it to finish before the arm moves on.
 
 ## `ExecutionResult` — quantifies the "execution" failure bucket
 

@@ -63,6 +63,9 @@ class CartesianChunkInterpolator:
         self.start_pose = np.asarray(start_pose, float).reshape(7).copy()
         self.max_linear_speed = max_linear_speed
         self.max_angular_speed = max_angular_speed
+        # Index of the waypoint currently being interpolated (updated during
+        # iteration), so an aborting executor can report WHERE the run stopped.
+        self.current_segment = 0
 
     def _segment_ticks(self, prev_pos, tgt_pos, prev_quat, tgt_quat, wp) -> int:
         n = max(1, int(round(wp.resolve_duration(self.hz) * self.hz)))
@@ -77,7 +80,8 @@ class CartesianChunkInterpolator:
     def __iter__(self) -> Iterator[Tuple[np.ndarray, Optional[GripperCommand]]]:
         prev_pos = self.start_pose[:3].copy()
         prev_quat = self.start_pose[3:7].copy()
-        for wp in self.chunk.waypoints:
+        for seg_idx, wp in enumerate(self.chunk.waypoints):
+            self.current_segment = seg_idx
             tgt_pos = wp.position
             tgt_quat = prev_quat if wp.quaternion is None else wp.quaternion
             n = self._segment_ticks(prev_pos, tgt_pos, prev_quat, tgt_quat, wp)

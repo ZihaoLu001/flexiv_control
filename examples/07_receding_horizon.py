@@ -35,7 +35,11 @@ def make_policy(goal_x: float):
             return None
         tgt = obs.tcp_pose.copy()
         tgt[0] = min(x + 0.02, goal_x)
-        # predict a short chunk; execute only its first waypoint (receding horizon)
+        # predict a short chunk; execute only its first waypoint (receding
+        # horizon). Naming a safety_profile pins the envelope the chunk was
+        # planned for -- the executor VERIFIES it against the robot's active
+        # profile (mismatch raises), so set the robot's profile to match (see
+        # main()) or leave the field "" to run under whatever is active.
         return CartesianChunk.from_pose_array(
             np.concatenate([tgt, [1.0, 40]])[None, :],
             n_execute=1,
@@ -49,6 +53,7 @@ def main() -> None:
     # (A) blocking receding horizon
     robot = Robot(RobotConfig(backend="fake"))
     robot.connect()
+    robot.set_safety_profile("free_space_fast")  # match the chunks' named profile
     robot.start_cartesian_impedance()
     goal = float(robot.get_state().tcp_pose[0]) + 0.08
     print(f"(A) blocking receding-horizon toward x={goal:.3f}")

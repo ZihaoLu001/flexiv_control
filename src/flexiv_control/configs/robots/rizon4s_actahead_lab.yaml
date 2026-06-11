@@ -9,8 +9,13 @@ gripper_name: ""
 n_joints: 7
 control_hz: 100.0
 default_safety_profile: actahead_lab
-# Restore/initial pose used in the lab (from the calibrated initial_joint_goal).
-q_home: [-0.001, -0.700, -0.002, 1.573, 0.005, 0.689, -0.003]
+# Restore/initial pose used in the lab. Source of truth: ActAhead
+# config/lab_home_posture.json (read-only RDK probe of the real arm); the
+# previous transcription had the j7 sign flipped (-0.003 vs the probed +0.0036).
+q_home: [-0.00109, -0.700414, -0.002085, 1.572872, 0.004996, 0.688793, 0.003576]
+# The canonical posture includes the gripper: OPEN at 0.085 m (the recorded
+# "AND GRIPPER OPEN" half that a joints-only q_home could not express).
+gripper_home_width: 0.085
 
 # --- MuJoCo sim (real2sim2real) -------------------------------------------
 # Build a persistent arm+GN01 model once with the bundled builder:

@@ -28,8 +28,11 @@ def test_backend_contract_fake():
     assert s.q.shape == (7,)
     assert s.tcp_pose.shape == (7,)
     assert s.wrench.shape == (6,)
-    # stream_* accept correctly-shaped setpoints without raising
+    # stream_* accept correctly-shaped setpoints once a matching motion mode is
+    # active (the fake now enforces the real backend's mode precondition).
+    b.set_mode(ControlMode.NRT_CARTESIAN_MOTION_FORCE)
     b.stream_cartesian(np.array([0.45, 0.0, 0.30, 1.0, 0.0, 0.0, 0.0]))
+    b.set_mode(ControlMode.NRT_JOINT_IMPEDANCE)
     b.stream_joint(np.zeros(7))
 
 

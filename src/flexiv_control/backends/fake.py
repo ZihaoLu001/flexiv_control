@@ -123,6 +123,16 @@ class FakeBackend(RobotBackend):
 
     # -- streaming ----------------------------------------------------------
     def stream_cartesian(self, pose: np.ndarray, wrench: Optional[np.ndarray] = None) -> None:
+        # Enforce the same mode precondition as the real RDK backend
+        # (SendCartesianMotionForce faults outside a Cartesian motion mode).
+        # The fake used to accept streaming in IDLE, which made dry runs
+        # structurally unable to reveal a missing start_cartesian_impedance().
+        if not self._mode.is_cartesian:
+            raise RuntimeError(
+                f"stream_cartesian in mode {self._mode.value!r}: the real backend "
+                "requires a Cartesian motion mode; call start_cartesian_impedance() "
+                "first (Robot.execute_cartesian_chunk now auto-ensures it)"
+            )
         pose = np.asarray(pose, float).reshape(7)
         self.cartesian_log.append(pose.copy())
         a = self._alpha
@@ -130,6 +140,12 @@ class FakeBackend(RobotBackend):
         self._pose[3:7] = quat_slerp(self._pose[3:7], quat_normalize(pose[3:7]), a)
 
     def stream_joint(self, q: np.ndarray) -> None:
+        # Mirror the real backend: joint streaming needs a joint motion mode.
+        if self._mode.is_cartesian or self._mode == ControlMode.IDLE:
+            raise RuntimeError(
+                f"stream_joint in mode {self._mode.value!r}: call "
+                "start_joint_impedance() first (Robot.move_joint does this)"
+            )
         q = np.asarray(q, float)
         self.joint_log.append(q.copy())
         a = self._alpha

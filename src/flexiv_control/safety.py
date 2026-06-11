@@ -31,6 +31,12 @@ class SafetyProfile:
     ws_y: Tuple[float, float] = (-0.45, 0.45)
     ws_z: Tuple[float, float] = (0.06, 0.70)
 
+    # What to do with a commanded position outside the box: "clip" (default)
+    # pulls it back onto the boundary and continues; "reject" protective-stops.
+    # A verify-then-execute planner should prefer "reject": a silently clipped
+    # waypoint means the executed path no longer matches the rollout it scored.
+    workspace_action: str = "clip"
+
     # TCP kinematic limits.
     max_linear_speed: float = 0.25       # m/s
     max_angular_speed: float = 0.60      # rad/s
@@ -85,6 +91,11 @@ class SafetyProfile:
             p.ws_y = tuple(ws["y"])
         if "z" in ws:
             p.ws_z = tuple(ws["z"])
+        if "action" in ws:
+            action = str(ws["action"]).lower()
+            if action not in ("clip", "reject"):
+                raise ValueError(f"workspace.action must be 'clip' or 'reject', got {action!r}")
+            p.workspace_action = action
         tl = d.get("tcp_limits", {})
         p.max_linear_speed = tl.get("max_linear_speed", p.max_linear_speed)
         p.max_angular_speed = tl.get("max_angular_speed", p.max_angular_speed)
@@ -108,6 +119,103 @@ class SafetyProfile:
         p.stop_on_state_stale = wd.get("stop_on_state_stale", p.stop_on_state_stale)
         p.hold_timeout_ms = wd.get("hold_timeout_ms", p.hold_timeout_ms)
         return p
+
+    def to_config_dict(self) -> dict:
+        """Serialize in the same nested layout :meth:`from_dict` reads, so a
+        profile can round-trip over the wire (``get_safety_profile`` RPC) and a
+        client can rebuild it with ``SafetyProfile.from_dict``."""
+        return {
+            "name": self.name,
+            "workspace": {
+                "x": list(self.ws_x),
+                "y": list(self.ws_y),
+                "z": list(self.ws_z),
+                "action": self.workspace_action,
+            },
+            "tcp_limits": {
+                "max_linear_speed": self.max_linear_speed,
+                "max_angular_speed": self.max_angular_speed,
+                "max_pose_jump_linear": self.max_pose_jump_linear,
+                "max_pose_jump_angular": self.max_pose_jump_angular,
+                "max_linear_accel": self.max_linear_accel,
+            },
+            "joint_limits": {
+                "margin_rad": self.joint_margin_rad,
+                "max_joint_speed_scale": self.max_joint_speed_scale,
+                "lower": self.joint_lower.tolist(),
+                "upper": self.joint_upper.tolist(),
+            },
+            "contact": {"max_wrench": self.max_contact_wrench.tolist()},
+            "watchdog": {
+                "command_timeout_ms": self.command_timeout_ms,
+                "state_timeout_ms": self.state_timeout_ms,
+                "stop_on_stale_command": self.stop_on_stale_command,
+                "stop_on_state_stale": self.stop_on_state_stale,
+                "hold_timeout_ms": self.hold_timeout_ms,
+            },
+        }
+
+    def validate_chunk(self, chunk) -> list:
+        """Client-side preflight: list every violation a chunk would hit.
+
+        Returns a list of human-readable strings, empty when the chunk is clean.
+        Workspace violations are hard errors (the filter would clip or reject
+        them); speed notes flag segments the interpolator would time-stretch, so
+        the caller's wall-clock estimate can account for it. This is the helper
+        a planner should call BEFORE sending a chunk, instead of duplicating the
+        profile's workspace box in its own constants.
+        """
+        import math
+
+        problems: list = []
+        lo = np.array([self.ws_x[0], self.ws_y[0], self.ws_z[0]])
+        hi = np.array([self.ws_x[1], self.ws_y[1], self.ws_z[1]])
+        lin_cap = self.max_linear_speed
+        ang_cap = self.max_angular_speed
+        try:
+            chunk_lin = float(getattr(chunk, "max_tcp_linear_speed", 0.0))
+            if chunk_lin > 0:
+                lin_cap = min(lin_cap, chunk_lin)
+            chunk_ang = float(getattr(chunk, "max_tcp_angular_speed", 0.0))
+            if chunk_ang > 0:
+                ang_cap = min(ang_cap, chunk_ang)
+        except (TypeError, ValueError):
+            pass
+        # The interpolator stretches on PEAK speed: its cosine blend peaks at
+        # pi/2 times the segment's average speed, so the stretch threshold is
+        # (pi/2)*dist/duration, not dist/duration.
+        peak = math.pi / 2.0
+        prev = None
+        prev_quat = None
+        for i, w in enumerate(chunk.waypoints):
+            pos = np.asarray(w.position, float).reshape(3)
+            if np.any(pos < lo) or np.any(pos > hi):
+                problems.append(
+                    f"waypoint {i}: position {np.round(pos, 4).tolist()} outside "
+                    f"workspace x{list(self.ws_x)} y{list(self.ws_y)} z{list(self.ws_z)} "
+                    f"({self.workspace_action} on execution)"
+                )
+            if prev is not None and w.duration is not None and w.duration > 0:
+                dur = float(w.duration)
+                dist = float(np.linalg.norm(pos - prev))
+                if peak * dist / dur > lin_cap:
+                    problems.append(
+                        f"waypoint {i}: peak linear speed {peak * dist / dur:.3f} m/s "
+                        f"exceeds cap {lin_cap:.3f} m/s (segment will be time-stretched "
+                        f"to ~{peak * dist / lin_cap:.2f}s)"
+                    )
+                if prev_quat is not None and w.quaternion is not None:
+                    ang = float(T.quat_angle(prev_quat, w.quaternion))
+                    if peak * ang / dur > ang_cap:
+                        problems.append(
+                            f"waypoint {i}: peak angular speed {peak * ang / dur:.3f} rad/s "
+                            f"exceeds cap {ang_cap:.3f} rad/s (segment will be "
+                            f"time-stretched to ~{peak * ang / ang_cap:.2f}s)"
+                        )
+            prev = pos
+            if w.quaternion is not None:
+                prev_quat = np.asarray(w.quaternion, float).reshape(4)
+        return problems
 
 
 @dataclass
@@ -184,11 +292,16 @@ class SafetyFilter:
         if np.any(np.abs(state.wrench) > p.max_contact_wrench):
             return SafetyResult(ok=False, reason=StopReason.CONTACT_WRENCH)
 
-        # 2. Workspace box clip on position.
+        # 2. Workspace box on position: clip back to the boundary, or -- when the
+        #    profile says ``workspace_action: reject`` -- protective-stop, so a
+        #    verify-then-execute planner fails loudly instead of executing a
+        #    silently displaced path.
         lo = np.array([p.ws_x[0], p.ws_y[0], p.ws_z[0]])
         hi = np.array([p.ws_x[1], p.ws_y[1], p.ws_z[1]])
         clipped_pos = np.clip(target_pose[:3], lo, hi)
         if not np.allclose(clipped_pos, target_pose[:3]):
+            if p.workspace_action == "reject":
+                return SafetyResult(ok=False, reason=StopReason.WORKSPACE)
             clipped = True
             reasons.append(StopReason.WORKSPACE)
             target_pose[:3] = clipped_pos

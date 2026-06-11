@@ -219,7 +219,12 @@ class MujocoBackend(RobotBackend):
         if self._grip_act < 0:
             return
         m, d = self._m, self._d
-        ctrl = self._grip_scale * float(cmd.width) + self._grip_offset
+        # grasp=True mirrors the RDK semantics (Gripper.Grasp ignores width and
+        # closes until contact): command full close and let contact physics /
+        # the actuator force limit stop the fingers on the object. A width move
+        # tracks the commanded width as before.
+        width_cmd = 0.0 if cmd.grasp else float(cmd.width)
+        ctrl = self._grip_scale * width_cmd + self._grip_offset
         lo, hi = m.actuator_ctrlrange[self._grip_act]
         d.ctrl[self._grip_act] = min(max(ctrl, lo), hi) if hi > lo else ctrl
         # Advance physics so a standalone command_gripper() visibly actuates the

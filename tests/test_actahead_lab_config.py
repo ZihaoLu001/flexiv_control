@@ -15,19 +15,23 @@ def test_actahead_lab_robot_config_loads():
 
 
 def test_actahead_lab_safety_profile_loads():
+    # The PICK-AND-PLACE envelope (re-derived from the closed-loop runner; the
+    # original transcription was the old push-task envelope and would have
+    # speed- and workspace-clipped the actual workload).
     p = load_safety_profile("actahead_lab")
     assert p.name == "actahead_lab"
-    assert tuple(p.ws_x) == (0.25, 0.85)
-    assert tuple(p.ws_y) == (-0.35, 0.35)
-    assert abs(p.max_linear_speed - 0.05) < 1e-9
-    assert abs(p.max_angular_speed - 0.20) < 1e-9
+    assert tuple(p.ws_x) == (0.25, 0.95)
+    assert tuple(p.ws_y) == (-0.45, 0.45)
+    assert p.workspace_action == "reject"
+    assert abs(p.max_linear_speed - 0.15) < 1e-9
+    assert abs(p.max_angular_speed - 0.45) < 1e-9
     assert abs(p.command_timeout_ms - 200.0) < 1e-9
 
 
 def test_robot_uses_actahead_profile_end_to_end():
     r = Robot(RobotConfig.load("rizon4s_actahead_lab"))
     assert r.profile.name == "actahead_lab"
-    assert r.profile.ws_x[1] == 0.85
+    assert r.profile.ws_x[1] == 0.95
     r.connect()  # fake backend; just confirm it constructs + connects
     assert r.get_state().q.shape == (7,)
     r.disconnect()

@@ -354,7 +354,19 @@ class FlexivRdkBackend(RobotBackend):
         self._mode = ControlMode.IDLE
 
     def home(self, q_home: Optional[np.ndarray] = None) -> None:
-        """Home via the NRT 'Home' primitive (robot-internal, safe)."""
+        """Home via the NRT 'Home' primitive (robot-internal, safe).
+
+        The vendor primitive goes to the FACTORY home, not a configured posture,
+        so a non-None ``q_home`` raises ``NotImplementedError`` and lets
+        ``Robot.home()`` fall back to a speed-capped interpolated joint move to
+        the configured posture -- previously the argument was silently ignored
+        and the arm ended somewhere other than the lab's canonical home.
+        """
+        if q_home is not None:
+            raise NotImplementedError(
+                "the RDK 'Home' primitive ignores a configured q_home; "
+                "Robot.home falls back to an interpolated joint move"
+            )
         self._robot.SwitchMode(_rdk_mode(ControlMode.NRT_PRIMITIVE))
         # ExecutePrimitive(name, input_params, block_until_started=True). (RDK v1.x)
         self._robot.ExecutePrimitive("Home", dict())

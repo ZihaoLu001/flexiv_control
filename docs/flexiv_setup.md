@@ -137,9 +137,18 @@ flexiv-control serve --config rizon4s_lab --host 0.0.0.0 --port 8766
 # on the GPU/dev machine
 from flexiv_control import RemoteRobot
 with RemoteRobot("ROBOT_HOST_IP", 8766, owner="trainer") as r:
-    r.acquire_lease()
+    # __enter__ already connected AND acquired the lease -- no second acquire.
     r.start_cartesian_impedance()
     ...
+
+# without a with-block (e.g. the robot is constructed conditionally):
+r = RemoteRobot("ROBOT_HOST_IP", 8766, owner="trainer")
+r.connect()
+r.acquire_lease()
+try:
+    ...
+finally:
+    r.close()   # releases the lease and closes the socket
 ```
 
 The client `pip install`s with nothing but numpy and needs no ROS. See

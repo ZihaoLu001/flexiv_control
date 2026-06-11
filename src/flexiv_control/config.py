@@ -105,6 +105,10 @@ class RobotConfig:
     q_home: np.ndarray = field(
         default_factory=lambda: np.array([0.0, -0.7, 0.0, 1.6, 0.0, 0.9, 0.0], float)
     )
+    # Gripper opening (metres) that belongs to the canonical home posture, so
+    # ``Robot.home()``/``go_home_safe()`` can restore the FULL recorded posture
+    # (joints AND gripper). None = leave the gripper alone.
+    gripper_home_width: Optional[float] = None
     # MuJoCo backend (sim / real2sim2real): path to a Rizon MJCF, the control
     # substep duration, and an optional TCP site name.
     model_path: Optional[str] = None
@@ -131,6 +135,8 @@ class RobotConfig:
         c.default_safety_profile = d.get("default_safety_profile", c.default_safety_profile)
         if "q_home" in d:
             c.q_home = np.asarray(d["q_home"], float)
+        if "gripper_home_width" in d and d["gripper_home_width"] is not None:
+            c.gripper_home_width = float(d["gripper_home_width"])
         c.model_path = d.get("model_path", c.model_path)
         if "control_dt" in d:
             c.control_dt = float(d["control_dt"])

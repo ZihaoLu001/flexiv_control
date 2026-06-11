@@ -1,23 +1,36 @@
-# ActAhead lab safety profile -- transcribed from the real cell limits in
-# ActAhead config/workspace.yaml (the conservative push-task envelope).
-# Validate on your own cell at low speed before trusting these defaults.
+# ActAhead lab safety profile -- the PICK-AND-PLACE envelope, re-derived from
+# the closed-loop runner that actually consumes it
+# (ActAhead scripts/run_real2sim2real_closed_loop.py WORKSPACE_* and chunk caps;
+# the previous revision was transcribed from the older push-task envelope and
+# would have speed-clipped and workspace-clipped the pick-place workload).
+# VERIFY on the real cell at low speed before the first hardware session --
+# in particular the z floor, which must clear the measured table plane.
 name: actahead_lab
 
 workspace:
-  # Planner/controller TCP box in the robot base frame (metres).
-  x: [0.25, 0.85]
-  y: [-0.35, 0.35]
-  z: [0.055, 0.70]          # 0.055 = the lab ee_z_push floor
+  # Planner/controller TCP box in the robot base frame (metres). The lab scene
+  # centers near x=0.78; the old x<=0.85 push box left no approach margin.
+  # VERIFY x max and the y-corner reach: x=0.95 at table height (radial ~1.05 m
+  # at y=+-0.45) may exceed the Rizon 4s + GN01 tool-down reach -- sweep the
+  # far corners at low speed before trusting them; an in-box but unreachable
+  # target passes this filter and only the robot's own limits catch it.
+  x: [0.25, 0.95]
+  y: [-0.45, 0.45]
+  z: [0.01, 0.70]           # VERIFY: floor must clear the measured table top
+                            # (the runner cross-checks this at session start)
+  # Reject (protective-stop) instead of silently clipping: a verify-then-execute
+  # planner must never run a displaced version of the path it scored.
+  action: reject
 
 tcp_limits:
-  max_linear_speed: 0.05    # lab push speed (m/s) -- deliberately slow
-  max_angular_speed: 0.20   # rad/s
-  max_pose_jump_linear: 0.02
-  max_pose_jump_angular: 0.10
+  max_linear_speed: 0.15    # m/s ceiling; planner chunks request 0.12 and bind
+  max_angular_speed: 0.45   # rad/s ceiling; planner chunks request 0.40
+  max_pose_jump_linear: 0.03
+  max_pose_jump_angular: 0.15
 
 joint_limits:
   margin_rad: 0.08
-  max_joint_speed_scale: 0.20
+  max_joint_speed_scale: 0.30
 
 contact:
   max_wrench: [40, 40, 40, 5, 5, 5]

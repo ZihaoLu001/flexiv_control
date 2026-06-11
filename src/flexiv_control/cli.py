@@ -39,8 +39,16 @@ def _cmd_serve(args) -> int:
     server = FlexivControlServer(
         robot=_robot(args), host=args.host, port=args.port, lease_ttl=args.lease_ttl
     )
+    prof = server.robot.profile
     print(f"[flexiv-control] serving backend={server.robot.cfg.backend!r} "
           f"on {args.host}:{args.port} (ctrl-c to stop)")
+    # Print the active envelope so the session log PROVES which profile ran --
+    # which workspace box and speed cap bind is otherwise invisible out-of-band
+    # state that consumers have guessed wrong.
+    print(f"[flexiv-control] safety profile {prof.name!r}: "
+          f"x{list(prof.ws_x)} y{list(prof.ws_y)} z{list(prof.ws_z)} "
+          f"({prof.workspace_action} on violation), "
+          f"caps {prof.max_linear_speed} m/s / {prof.max_angular_speed} rad/s")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

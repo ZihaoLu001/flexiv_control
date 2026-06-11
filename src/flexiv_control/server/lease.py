@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional
 
@@ -36,6 +37,11 @@ class Lease:
         self.ttl = float(ttl_seconds)
         self._lock = threading.Lock()
         self._info: Optional[LeaseInfo] = None
+        # Number of in-flight RPCs from the owner. While > 0 the lease cannot
+        # expire: a blocking motion RPC can outlast the TTL with no heartbeat
+        # getting through (the client's heartbeat shares the same socket), and
+        # an in-flight request from the owner IS liveness.
+        self._holds = 0
 
     # -- queries -------------------------------------------------------------
     @property
@@ -51,8 +57,27 @@ class Lease:
 
     def _expire_if_stale(self) -> None:
         with self._lock:
+            if self._holds > 0:
+                return
             if self._info and time.time() > self._info.expires_at:
                 self._info = None
+
+    @contextmanager
+    def hold(self, owner: str):
+        """Mark an in-flight RPC from ``owner`` as liveness: the lease cannot
+        expire (and so cannot be stolen without ``force=True``) while held.
+        Refreshes the expiry on exit so the owner gets a full TTL after a long
+        blocking call returns."""
+        self.check(owner)
+        with self._lock:
+            self._holds += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._holds -= 1
+                if self._info and self._info.owner == owner:
+                    self._info.expires_at = time.time() + self.ttl
 
     # -- mutations -----------------------------------------------------------
     def acquire(self, owner: str, *, force: bool = False) -> LeaseInfo:

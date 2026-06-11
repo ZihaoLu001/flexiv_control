@@ -119,17 +119,27 @@ class CartesianChunk:
     impedance: ImpedanceParams = field(default_factory=ImpedanceParams)
     force_control: Optional[ForceControlParams] = None
 
-    # Kinematic envelope enforced by the interpolator + safety filter.
+    # Kinematic SPEED envelope. Enforced as TIGHTENING-ONLY at execution: the
+    # interpolator runs at min(chunk cap, active profile cap), so a chunk may
+    # slow itself below the profile but can never relax the profile's limits.
     max_tcp_linear_speed: float = 0.25    # m/s
     max_tcp_angular_speed: float = 0.60   # rad/s
+    # Acceleration fields are ADVISORY metadata only (logged, not enforced);
+    # the profile's opt-in per-tick accel cap (max_linear_accel) is what binds.
     max_tcp_linear_acc: float = 1.0       # m/s^2
     max_tcp_angular_acc: float = 2.0      # rad/s^2
 
-    # Contact envelope (None -> use the safety profile default).
+    # Contact envelope (None -> use the safety profile default). Like the speed
+    # caps, applied as min(chunk, profile) -- tightening only.
     max_contact_wrench: Optional[np.ndarray] = None  # [fx,fy,fz,tx,ty,tz]
 
-    # Named safety profile to load before executing (reproducibility).
-    safety_profile: str = "tabletop_safe"
+    # Expected active safety profile (reproducibility contract). Empty string
+    # (default) = "execute under whatever profile is active". A non-empty name
+    # is VERIFIED at execution: if it does not match the robot's active profile,
+    # ``execute_cartesian_chunk`` raises instead of silently running under a
+    # different envelope. The requested and active names are always recorded in
+    # ``ExecutionResult.log``.
+    safety_profile: str = ""
 
     frame: str = "base"
 
@@ -218,6 +228,7 @@ class CartesianChunk:
         gripper_force: float = 20.0,
         gripper_span: float = 0.08,
         hold_orientation: bool = True,
+        frames_hz: Optional[float] = None,
         **chunk_kwargs,
     ) -> "CartesianChunk":
         """Build a chunk directly from a planner's ``(H, 5)`` action array ``u``.
@@ -226,10 +237,19 @@ class CartesianChunk:
         *normalised* gripper command in ``[0, 1]`` (1 = open, 0 = closed) and ``n``
         is the integer number of low-level control frames. ``w`` is mapped to a
         physical width ``w * gripper_span`` -- pass your gripper's real stroke as
-        ``gripper_span`` (e.g. RDK ``GripperParams.max_width``); the 0.08 m default
-        is the lab GN01 and must not be assumed for other grippers. Orientation is
+        ``gripper_span`` (e.g. RDK ``GripperParams.max_width``); 0.08 m is a
+        generic conservative default, NOT a measured stroke (the lab GN01's is
+        0.10 m per its robot config). Orientation is
         held from the previous pose; use :meth:`from_pose_array` to command it.
+
+        ``n`` is interpreted at the ROBOT's control rate by default. A planner
+        that ticks at its own rate (e.g. a simulator at 12 fps) should pass that
+        rate as ``frames_hz``; each ``n`` then becomes ``duration = n/frames_hz``
+        so the chunk runs at the speed the planner simulated, independent of the
+        robot's control rate.
         """
+        if frames_hz is not None and frames_hz <= 0:
+            raise ValueError("frames_hz must be > 0")
         u = np.asarray(u, float)
         if u.ndim != 2 or u.shape[1] != 5:
             raise ValueError("u must have shape (H, 5): (x, y, z, w, n)")
@@ -246,12 +266,17 @@ class CartesianChunk:
         wpts: List[CartesianWaypoint] = []
         for x, y, z, w, n in u:
             grip = GripperCommand.from_normalized(w, span=gripper_span, force=gripper_force)
+            timing = (
+                {"duration": max(1, int(round(n))) / float(frames_hz)}
+                if frames_hz is not None
+                else {"n_frames": max(1, int(round(n)))}
+            )
             wpts.append(
                 CartesianWaypoint(
                     position=[x, y, z],
                     quaternion=None,
                     gripper=grip,
-                    n_frames=max(1, int(round(n))),
+                    **timing,
                 )
             )
         return cls(waypoints=wpts, **chunk_kwargs)
@@ -263,6 +288,7 @@ class CartesianChunk:
         *,
         gripper_force: float = 20.0,
         gripper_span: float = 0.08,
+        frames_hz: Optional[float] = None,
         **chunk_kwargs,
     ) -> "CartesianChunk":
         """Build a chunk from an ``(H, 9)`` array that carries orientation.
@@ -274,18 +300,72 @@ class CartesianChunk:
         chunks, e.g. ACT/openpi-style). Combine with ``representation=`` and
         ``n_execute=`` via ``chunk_kwargs`` for relative / receding-horizon use.
         """
+        if frames_hz is not None and frames_hz <= 0:
+            raise ValueError("frames_hz must be > 0")
         u = np.asarray(u, float)
         if u.ndim != 2 or u.shape[1] != 9:
             raise ValueError("u must have shape (H, 9): (x,y,z, qw,qx,qy,qz, w, n)")
         wpts: List[CartesianWaypoint] = []
         for row in u:
             grip = GripperCommand.from_normalized(row[7], span=gripper_span, force=gripper_force)
+            timing = (
+                {"duration": max(1, int(round(row[8]))) / float(frames_hz)}
+                if frames_hz is not None
+                else {"n_frames": max(1, int(round(row[8])))}
+            )
             wpts.append(
                 CartesianWaypoint(
                     position=row[:3],
                     quaternion=row[3:7],
                     gripper=grip,
-                    n_frames=max(1, int(round(row[8]))),
+                    **timing,
+                )
+            )
+        return cls(waypoints=wpts, **chunk_kwargs)
+
+    @classmethod
+    def from_topdown_array(
+        cls,
+        u: np.ndarray,
+        *,
+        down_quat=(0.0, 0.0, 1.0, 0.0),
+        gripper_span: float = 0.08,
+        gripper_force: float = 20.0,
+        frames_hz: Optional[float] = None,
+        **chunk_kwargs,
+    ) -> "CartesianChunk":
+        """Build a chunk from ``(H, 6)`` top-down waypoints ``(x, y, z, yaw, w, n)``.
+
+        The canonical tabletop-manipulation action: a position, a wrist yaw about
+        the base z axis, a normalised gripper command ``w`` in ``[0, 1]``, and a
+        frame count ``n``. Each waypoint's orientation is ``yaw`` composed onto
+        ``down_quat`` -- YOUR tool-pointing-down quaternion, (w, x, y, z); the
+        default ``(0, 0, 1, 0)`` is a 180-degree flip about base y. Every
+        top-down planner otherwise re-derives this composition by hand (and the
+        quaternion order is easy to get wrong). See :meth:`from_waypoint_array`
+        for ``gripper_span`` / ``frames_hz`` semantics.
+        """
+        from . import transforms as T
+
+        if frames_hz is not None and frames_hz <= 0:
+            raise ValueError("frames_hz must be > 0")
+        u = np.asarray(u, float)
+        if u.ndim != 2 or u.shape[1] != 6:
+            raise ValueError("u must have shape (H, 6): (x, y, z, yaw, w, n)")
+        wpts: List[CartesianWaypoint] = []
+        for x, y, z, yaw, w, n in u:
+            grip = GripperCommand.from_normalized(w, span=gripper_span, force=gripper_force)
+            timing = (
+                {"duration": max(1, int(round(n))) / float(frames_hz)}
+                if frames_hz is not None
+                else {"n_frames": max(1, int(round(n)))}
+            )
+            wpts.append(
+                CartesianWaypoint(
+                    position=[x, y, z],
+                    quaternion=T.top_down_quat(yaw, base_quat=down_quat),
+                    gripper=grip,
+                    **timing,
                 )
             )
         return cls(waypoints=wpts, **chunk_kwargs)
@@ -338,7 +418,9 @@ class JointWaypoint:
 class JointChunk:
     waypoints: List[JointWaypoint]
     max_joint_speed_scale: float = 0.3   # fraction of joint vel limits
-    safety_profile: str = "tabletop_safe"
+    # Same semantics as CartesianChunk.safety_profile: "" = use the active
+    # profile; a non-empty name must match the active profile or execution raises.
+    safety_profile: str = ""
 
     def __post_init__(self) -> None:
         if not self.waypoints:
@@ -370,3 +452,13 @@ class ExecutionResult:
     gripper_width_final: float = 0.0
     final_state: Optional["object"] = None  # RobotState; Optional to avoid import cycle
     log: dict = field(default_factory=dict)
+
+    def summary(self) -> str:
+        """One-line human-readable rendering, so consumers log the whole result
+        instead of printing one field and silently dropping a protective stop."""
+        return (
+            f"{'ok' if self.success else 'STOPPED'} stop={self.stop_reason} "
+            f"dur={self.executed_duration:.2f}s clip={self.clipped} "
+            f"track_err={1000.0 * self.path_tracking_error:.1f}mm "
+            f"grip={self.gripper_width_final:.4f}m"
+        )

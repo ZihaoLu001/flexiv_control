@@ -261,7 +261,7 @@ def chunk_from_dict(d: dict) -> CartesianChunk:
         max_contact_wrench=None
         if d.get("max_contact_wrench") is None
         else np.asarray(d["max_contact_wrench"], float),
-        safety_profile=d.get("safety_profile", "tabletop_safe"),
+        safety_profile=d.get("safety_profile", ""),
         frame=d.get("frame", "base"),
         representation=ChunkRepresentation(d.get("representation", "absolute")),
         n_execute=d.get("n_execute"),
@@ -298,5 +298,5 @@ def joint_chunk_from_dict(d: dict) -> JointChunk:
     return JointChunk(
         waypoints=wpts,
         max_joint_speed_scale=float(d.get("max_joint_speed_scale", 0.3)),
-        safety_profile=d.get("safety_profile", "tabletop_safe"),
+        safety_profile=d.get("safety_profile", ""),
     )

@@ -191,6 +191,13 @@ class GripperCommand:
     *abstraction* on top of this continuous width. ``grasp=True`` selects
     move-until-contact force control (RDK ``Gripper.Grasp(force)``) instead of a
     position move.
+
+    .. warning:: When ``grasp=True``, the RDK backend calls ``Gripper.Grasp(force)``
+       and **ignores** ``width`` entirely -- the fingers close until contact at the
+       force limit. A planner that encodes close-intent by thresholding width must
+       not expect the commanded width to be tracked on hardware. The MuJoCo backend
+       mirrors this (a grasp command drives the fingers closed and lets contact
+       physics stop them) so the sim and real semantics agree.
     """
 
     width: float = 0.0          # metres

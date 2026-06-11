@@ -85,8 +85,9 @@ If you use the optional extras, also note their versions (`gymnasium`,
 
 ## Pinning guidance
 
-- **`flexiv_control` itself**: this is `0.1.0`. Pin it in downstream projects
-  (`flexiv-control==0.1.0`) so an upgrade is a deliberate, reviewed step.
+- **`flexiv_control` itself**: pin the exact version you validated against in
+  downstream projects (e.g. `flexiv-control==0.1.1`) so an upgrade is a
+  deliberate, reviewed step. The current release is `0.1.1`.
 - **RDK / firmware**: pin to the matched pair Flexiv documents for your robot;
   do not upgrade one without the other.
 - **numpy**: the core needs only numpy and is written to work across modern

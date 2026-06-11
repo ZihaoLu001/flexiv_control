@@ -27,6 +27,9 @@ robot.connect()
 robot.start_cartesian_impedance()
 
 u = planner.best_chunk()                     # (H, 5): (x, y, z, w, n)
+# Naming a safety_profile pins the envelope the chunk was planned for; it is
+# VERIFIED against the robot's active profile (a mismatch raises). Leave it ""
+# (the default) to run under whatever profile is active.
 chunk = CartesianChunk.from_waypoint_array(u, safety_profile="tabletop_safe")
 result = robot.execute_cartesian_chunk(chunk)
 ```

@@ -25,7 +25,7 @@ def _robot():
 
 def _abs_chunk(pose, n=60):
     return CartesianChunk.from_pose_array(
-        np.concatenate([pose, [1.0, n]])[None, :], safety_profile="free_space_fast"
+        np.concatenate([pose, [1.0, n]])[None, :]
     )
 
 

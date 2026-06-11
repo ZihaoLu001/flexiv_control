@@ -47,6 +47,7 @@ class RemoteRobot:
         heartbeat_period: float = 0.5,
         heartbeat_max_failures: int = 3,
         timeout: float = 10.0,
+        motion_timeout: float = 600.0,
     ):
         self.host = host
         self.port = port
@@ -54,6 +55,13 @@ class RemoteRobot:
         self.heartbeat_period = heartbeat_period
         self.heartbeat_max_failures = heartbeat_max_failures
         self.timeout = timeout
+        # Blocking motion RPCs (execute_*/move_*/home/go_home_safe and a
+        # wait=True gripper command) legitimately run for many seconds -- chunk
+        # segments are TIME-STRETCHED to honor speed caps, and a home ritual
+        # bundles several stages into one RPC. Reading those with the short
+        # default timeout used to raise client-side WHILE THE ARM KEPT MOVING
+        # and then desynchronize every later response on the socket.
+        self.motion_timeout = motion_timeout
 
         self._sock: Optional[socket.socket] = None
         self._rfile = None
@@ -106,18 +114,42 @@ class RemoteRobot:
         self.close()
 
     # -- low-level RPC -------------------------------------------------------
+    # Methods whose server-side handler can legitimately block for the duration
+    # of a real robot motion: read them with `motion_timeout` instead of the
+    # short default.
+    _MOTION_METHODS = frozenset({
+        "execute_cartesian_chunk", "execute_joint_chunk", "move_joint",
+        "servo_cartesian_delta", "servo_cartesian_pose",
+        "command_gripper", "home", "go_home_safe",
+    })
+
     def _call(self, method: str, **params) -> dict:
         if self._wfile is None or self._rfile is None:
             raise RemoteRobotError("not connected; call connect() first")
         with self._io_lock:
             self._next_id += 1
             rid = self._next_id
-            self._wfile.write(P.dumps({"id": rid, "method": method, "params": params}))
-            self._wfile.flush()
-            line = self._rfile.readline()
+            if method in self._MOTION_METHODS and self._sock is not None:
+                self._sock.settimeout(self.motion_timeout)
+            try:
+                self._wfile.write(P.dumps({"id": rid, "method": method, "params": params}))
+                self._wfile.flush()
+                line = self._rfile.readline()
+            finally:
+                if method in self._MOTION_METHODS and self._sock is not None:
+                    self._sock.settimeout(self.timeout)
             if not line:
                 raise RemoteRobotError("server closed the connection")
             resp = P.loads(line)
+            # A response that does not match our request id means the stream is
+            # desynchronized (e.g. an earlier read timed out and its reply is
+            # still queued). Mis-attributing results on a robot-control channel
+            # is far worse than failing: refuse the connection.
+            if resp.get("id") != rid:
+                raise RemoteRobotError(
+                    f"response id {resp.get('id')!r} does not match request id {rid} "
+                    f"({method}); the connection is desynchronized -- reconnect"
+                )
         if not resp.get("ok", False):
             raise RemoteRobotError(resp.get("error", "unknown server error"))
         return resp.get("result", {})
@@ -153,8 +185,10 @@ class RemoteRobot:
     def _heartbeat(self) -> None:
         # Tolerate transient hiccups: a single slow/dropped heartbeat must not
         # silently let the lease expire under a live client. Give up only after
-        # several consecutive failures, or immediately if the server actively
-        # rejects us (lease revoked) -- retrying cannot recover that.
+        # several consecutive failures, or if the server actively rejects us
+        # (lease lost) AND one re-acquire attempt fails -- a lease that merely
+        # expired (e.g. heartbeats starved behind a long blocking RPC on this
+        # shared socket) is recoverable, a lease taken by another owner is not.
         consecutive_failures = 0
         while self._hb_running:
             time.sleep(self.heartbeat_period)
@@ -164,10 +198,15 @@ class RemoteRobot:
                 self._call("heartbeat", owner=self.owner)
                 consecutive_failures = 0
             except RemoteRobotError:
-                # Server-side rejection (e.g. lease lost/overridden): stop.
-                self._has_lease = False
-                self._hb_running = False
-                break
+                # Lease lost. If it simply expired, nobody holds it and a plain
+                # re-acquire succeeds; if another owner took it, stop for good.
+                try:
+                    self._call("acquire_lease", owner=self.owner, force=False)
+                    consecutive_failures = 0
+                except Exception:
+                    self._has_lease = False
+                    self._hb_running = False
+                    break
             except Exception:
                 # Transient socket/timeout hiccup: tolerate a few, then give up.
                 consecutive_failures += 1
@@ -179,6 +218,15 @@ class RemoteRobot:
     # -- mirror of the Robot API --------------------------------------------
     def set_safety_profile(self, name: str) -> None:
         self._call("set_safety_profile", owner=self.owner, name=name)
+
+    def get_safety_profile(self):
+        """Fetch the server's ACTIVE safety profile (workspace box, speed caps,
+        ...). This is the single source of truth a client should prevalidate
+        chunks against (``profile.validate_chunk(chunk)``) instead of keeping
+        its own workspace constants that silently drift from the server's."""
+        from ..safety import SafetyProfile
+
+        return SafetyProfile.from_dict(self._call("get_safety_profile")["profile"])
 
     def get_state(self) -> RobotState:
         return P.state_from_dict(self._call("get_state")["state"])
@@ -234,38 +282,109 @@ class RemoteRobot:
         return P.result_from_dict(r["result"])
 
     def execute_cartesian_chunk(
-        self, chunk: CartesianChunk, *, blocking: bool = True
+        self, chunk: CartesianChunk, *, blocking: bool = True, raise_on_stop: bool = False
     ) -> ExecutionResult:
         # `blocking` is accepted for signature parity with Robot; the server always
-        # executes synchronously, so it is a no-op on the wire.
+        # executes synchronously, so it is a no-op on the wire. THIS connection is
+        # therefore busy until the chunk returns -- to abort a chunk in flight,
+        # call ``stop()`` from a separate client/connection (the server's stop
+        # handler needs no lease and cancels the executing loop within one tick).
         r = self._call(
             "execute_cartesian_chunk", owner=self.owner, chunk=P.chunk_to_dict(chunk)
         )
-        return P.result_from_dict(r["result"])
+        result = P.result_from_dict(r["result"])
+        if raise_on_stop and not result.success:
+            from ..robot import ChunkStoppedError
 
-    def execute_joint_chunk(self, chunk: JointChunk) -> ExecutionResult:
+            raise ChunkStoppedError(result)
+        return result
+
+    def execute_joint_chunk(
+        self, chunk: JointChunk, *, raise_on_stop: bool = False
+    ) -> ExecutionResult:
         r = self._call(
             "execute_joint_chunk", owner=self.owner, chunk=P.joint_chunk_to_dict(chunk)
         )
-        return P.result_from_dict(r["result"])
+        result = P.result_from_dict(r["result"])
+        if raise_on_stop and not result.success:
+            from ..robot import ChunkStoppedError
+
+            raise ChunkStoppedError(result)
+        return result
 
     def move_joint(
-        self, q_target, *, duration: float = 3.0, realtime: bool = False
+        self,
+        q_target,
+        *,
+        duration: Optional[float] = None,
+        max_joint_speed: Optional[float] = None,
+        realtime: bool = False,
     ) -> ExecutionResult:
+        """Interpolated joint move; give a fixed ``duration`` (s) OR a
+        ``max_joint_speed`` (rad/s) cap on the largest joint excursion."""
         r = self._call(
             "move_joint",
             owner=self.owner,
             q=np.asarray(q_target, float).tolist(),
             duration=duration,
+            max_joint_speed=max_joint_speed,
             realtime=realtime,
         )
         return P.result_from_dict(r["result"])
 
-    def command_gripper(self, cmd: GripperCommand) -> None:
-        self._call("command_gripper", owner=self.owner, gripper=P.gripper_to_dict(cmd))
+    def command_gripper(
+        self, cmd: GripperCommand, *, wait: bool = False, timeout: float = 5.0
+    ) -> Optional[float]:
+        """Send a gripper command; ``wait=True`` blocks until the fingers settle
+        and returns the final width (else ``None``)."""
+        r = self._call(
+            "command_gripper",
+            owner=self.owner,
+            gripper=P.gripper_to_dict(cmd),
+            wait=wait,
+            timeout=timeout,
+        )
+        return r.get("final_width")
 
-    def home(self) -> None:
-        self._call("home", owner=self.owner)
+    def home(
+        self,
+        q=None,
+        *,
+        max_joint_speed: Optional[float] = None,
+        duration: Optional[float] = None,
+    ) -> None:
+        """Move to the canonical posture: ``q`` if given, else the SERVER
+        config's ``q_home`` (plus its ``gripper_home_width`` if configured)."""
+        self._call(
+            "home",
+            owner=self.owner,
+            q=None if q is None else np.asarray(q, float).tolist(),
+            max_joint_speed=max_joint_speed,
+            duration=duration,
+        )
+
+    def go_home_safe(
+        self,
+        *,
+        q_home=None,
+        lift_m: float = 0.10,
+        open_gripper_width: Optional[float] = None,
+        max_tcp_speed: float = 0.10,
+        max_joint_speed: float = 0.3,
+    ) -> ExecutionResult:
+        """End-of-session exit ritual: lift straight up, open the gripper (and
+        wait), then joint-move home -- each stage tolerating the previous one's
+        failure. Put THIS in the ``finally`` block instead of hand-rolling it."""
+        r = self._call(
+            "go_home_safe",
+            owner=self.owner,
+            q_home=None if q_home is None else np.asarray(q_home, float).tolist(),
+            lift_m=lift_m,
+            open_gripper_width=open_gripper_width,
+            max_tcp_speed=max_tcp_speed,
+            max_joint_speed=max_joint_speed,
+        )
+        return P.result_from_dict(r["result"])
 
     def stop(self) -> None:
         self._call("stop", owner=self.owner)
