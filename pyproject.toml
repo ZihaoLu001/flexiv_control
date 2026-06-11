@@ -47,8 +47,9 @@ yaml = ["pyyaml"]
 # MuJoCo simulation backend.
 mujoco = ["mujoco>=3.0"]
 # Live browser visualization: robot mirror + intended-motion preview
-# (viser web viewer + yourdfpy URDF kinematics for the cosmetic mesh arm).
-viz = ["viser>=1.0,<2", "yourdfpy>=0.0.53"]
+# (viser web viewer + yourdfpy URDF kinematics; standalone xacro generates the
+# Rizon arm+gripper URDF from the vendor's flexiv_description sources).
+viz = ["viser>=1.0,<2", "yourdfpy>=0.0.53", "xacro>=2.0"]
 # Dev / CI.
 dev = ["pytest>=7", "pytest-timeout", "ruff"]
 

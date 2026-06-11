@@ -73,26 +73,45 @@ path no longer starts where the robot is, and executing it would be a lie.
 
 ## The robot model (optional)
 
-The mesh arm needs a Rizon URDF + meshes from Flexiv's
-[flexiv_description](https://github.com/flexivrobotics/flexiv_description)
-(branch `humble-v1`/`jazzy-v1`; the `*-v2` branches describe a different
-robot). Resolution order:
+The mesh mirror renders the REAL Rizon arm **and the articulated GN01
+gripper**: flexiv_description ships only xacro sources, so the library
+generates a self-contained URDF (standalone `xacro`, no ROS) with two
+post-processing steps that make it render correctly:
 
-1. `FLEXIV_DESCRIPTION_DIR` -- a local checkout;
-2. `~/.cache/flexiv_control/` -- populated by `flexiv-control viz --fetch-assets`
-   (explicit consent; the library never downloads silently);
-3. nothing found -> **frames mode**: TCP frame + gripper jaws + trail +
-   workspace box + full intended-motion preview. Frames mode is fully
+* **mesh paths absolutized** (the vendor mixes `package://` and
+  package-relative paths, which break outside a ROS workspace);
+* **nested mimic chains flattened** -- the GN01's 4-bar fingers mimic a joint
+  that itself mimics the drive joint, which yourdfpy resolves only one level
+  deep (five of six finger joints would freeze). After flattening, the whole
+  gripper articulates, driven directly by the streamed `gripper_width` in
+  metres (the vendor's `finger_width_joint` mimic coefficients, 9.404/-0.155,
+  are the same calibration our MJCF uses).
+
+The arm joints are mapped **by name** (`joint1..joint7`) -- the URDF lists the
+gripper drive first among actuated joints, so positional feeding would twist
+the gripper with joint 1.
+
+Asset resolution order (first hit wins):
+
+1. a previously generated URDF in `~/.cache/flexiv_control/generated/`;
+2. any `*.urdf` you provide under `FLEXIV_DESCRIPTION_DIR`;
+3. generation from the xacro sources in `FLEXIV_DESCRIPTION_DIR` or the cache;
+4. `flexiv-control viz --fetch-assets` downloads the pinned
+   [flexiv_description](https://github.com/flexivrobotics/flexiv_description)
+   `humble-v1` branch first (explicit consent; the `*-v2` branches describe a
+   different robot, and the library never downloads silently);
+5. nothing found -> **frames mode**: TCP frame + parametric gripper jaws +
+   trail + workspace box + full intended-motion preview. Frames mode is fully
    functional for the safety/debugging use case; assets are never
-   load-bearing. (The fake backend always runs frames mode: its `q` and
-   `tcp_pose` are not FK-consistent, so a mesh arm would lie.)
+   load-bearing. (The fake backend should run frames mode: its `q` and
+   `tcp_pose` are not FK-consistent, so a mesh arm would lie about the TCP.)
 
 ## What you see
 
 | Element | Source |
 |---|---|
-| mesh arm (optional) | URDF + streamed `q` via `ViserUrdf` (cosmetic) |
-| TCP frame + jaws | streamed `tcp_pose` + `gripper_width` (authoritative) |
+| mesh arm + articulated GN01 (optional) | generated URDF; `q` by joint name + `gripper_width` -> `finger_width_joint` (cosmetic) |
+| TCP frame (+ jaws in frames mode) | streamed `tcp_pose` + `gripper_width` (authoritative) |
 | blue trail | last ~25 s of measured TCP positions |
 | amber/red wireframe box | active safety profile workspace (clip/reject) |
 | time-colored path (blue->red) | the chunk's true per-tick command stream |

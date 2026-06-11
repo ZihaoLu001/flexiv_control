@@ -64,11 +64,19 @@ def _find_urdf(root: Path, model: str) -> Optional[Path]:
 
 
 def ensure_rizon_urdf(model: str = "rizon4s", *, download: bool = False) -> Optional[Path]:
-    """Resolve a Rizon URDF path, or ``None`` (-> frames mode).
+    """Resolve a Rizon URDF path (arm + articulated GN01 gripper), or ``None``
+    (-> frames mode).
 
-    ``download=True`` permits fetching the pinned ``flexiv_description``
-    tarball into the user cache when nothing is found locally.
+    flexiv_description ships xacro SOURCES, not a committed URDF, so the
+    resolution chain is: (1) a previously generated URDF in the cache; (2) any
+    ``*.urdf`` the user provides under ``FLEXIV_DESCRIPTION_DIR`` or the
+    cache; (3) generate one from the xacro sources (standalone ``xacro``
+    package, no ROS) found in the env-var checkout or the cache;
+    (4) with ``download=True``, fetch the pinned checkout first.
     """
+    gen = cache_dir() / "generated" / f"{model}_gn01.urdf"
+    if gen.is_file():
+        return gen
     env = os.environ.get("FLEXIV_DESCRIPTION_DIR")
     if env:
         found = _find_urdf(Path(env), model)
@@ -77,11 +85,130 @@ def ensure_rizon_urdf(model: str = "rizon4s", *, download: bool = False) -> Opti
     found = _find_urdf(cache_dir(), model)
     if found is not None:
         return found
+    for root in filter(None, [Path(env) if env else None, _cached_checkout()]):
+        out = generate_rizon_urdf(root, model=model)
+        if out is not None:
+            return out
     if download:
         root = fetch_flexiv_description()
         if root is not None:
-            return _find_urdf(root, model)
+            return _find_urdf(root, model) or generate_rizon_urdf(root, model=model)
     return None
+
+
+def _cached_checkout() -> Optional[Path]:
+    roots = sorted(cache_dir().glob("flexiv_description-*"))
+    return roots[-1] if roots else None
+
+
+def generate_rizon_urdf(
+    checkout: Path, *, model: str = "rizon4s", load_gripper: bool = True
+) -> Optional[Path]:
+    """Generate ``<model>`` URDF (with the articulated Flexiv-GN01 gripper)
+    from a flexiv_description checkout, using the standalone ``xacro`` package.
+
+    The xacro sources reference the package via ROS ``$(find
+    flexiv_description)`` substitutions, which standalone xacro cannot
+    resolve; we shadow-copy the tree and substitute the literal path first.
+    The result is cached at ``~/.cache/flexiv_control/generated/`` and ends up
+    with ABSOLUTE mesh paths into the shadow copy, so it loads in yourdfpy
+    with no package handling. Returns ``None`` (frames mode) on any failure.
+    """
+    try:
+        import shutil
+
+        import xacro  # standalone PyPI package; no ROS needed
+
+        checkout = Path(checkout)
+        entry = checkout / "urdf" / "rizon.urdf.xacro"
+        if not entry.is_file():
+            return None
+        shadow = cache_dir() / "generated" / "_xacro_shadow" / checkout.name
+        if shadow.exists():
+            shutil.rmtree(shadow)
+        shadow.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(checkout, shadow)
+        token = "$(find flexiv_description)"
+        for f in shadow.rglob("*.xacro"):
+            text = f.read_text(encoding="utf-8")
+            if token in text:
+                f.write_text(text.replace(token, shadow.as_posix()), encoding="utf-8")
+        # The vendor xacro spells types capitalized (Rizon4s).
+        rizon_type = model[0].upper() + model[1:].lower()
+        doc = xacro.process_file(
+            str(shadow / "urdf" / "rizon.urdf.xacro"),
+            mappings={
+                "rizon_type": rizon_type,
+                "load_gripper": "true" if load_gripper else "false",
+            },
+        )
+        urdf_xml = _postprocess_urdf(doc.toprettyxml(indent="  "), shadow)
+        out = cache_dir() / "generated" / f"{model}_gn01.urdf"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(urdf_xml, encoding="utf-8")
+        return out
+    except Exception as e:  # noqa: BLE001 -- assets are never load-bearing
+        print(f"[flexiv_control.viz] URDF generation failed "
+              f"({type(e).__name__}: {e}); running in frames mode")
+        return None
+
+
+def _postprocess_urdf(urdf_xml: str, package_root: Path) -> str:
+    """Make the generated URDF self-contained for yourdfpy:
+
+    1. **Absolutize mesh paths.** Some vendor visual parameters emit
+       package-relative mesh filenames (``meshes/Rizon4s/visual/link7.obj``);
+       a loader would resolve those against the URDF's own directory (the
+       cache), not the checkout. Prefix every relative, non-``package://``
+       filename with the shadow checkout root.
+    2. **Flatten nested mimics.** The GN01 gripper chains its mimics (e.g.
+       ``left_inner_knuckle`` mimics ``left_outer_knuckle`` which mimics the
+       actuated ``finger_width_joint``), but yourdfpy resolves only ONE level
+       -- nested mimics collapse to ``0.0 + offset`` (with a warning per
+       update), freezing five of the six finger joints. Composing
+       transitively (if A = m1*B + o1 and B = m2*C + o2 then
+       A = (m1*m2)*C + (m1*o2 + o1)) points every mimic at the actuated drive
+       joint, so the whole 4-bar articulates.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(urdf_xml)
+
+    for mesh in root.iter("mesh"):
+        fname = mesh.get("filename", "")
+        if not fname or os.path.isabs(fname):
+            continue
+        if fname.startswith("package://"):
+            rel = fname[len("package://"):]
+            rel = rel.split("/", 1)[1] if "/" in rel else rel  # drop the package name
+            mesh.set("filename", (package_root / rel).as_posix())
+        else:
+            mesh.set("filename", (package_root / fname).as_posix())
+    mimics = {}      # joint name -> (target, multiplier, offset, element)
+    actuated = set()
+    for joint in root.iter("joint"):
+        name = joint.get("name", "")
+        m = joint.find("mimic")
+        if m is not None:
+            mimics[name] = (
+                m.get("joint", ""),
+                float(m.get("multiplier", "1") or 1.0),
+                float(m.get("offset", "0") or 0.0),
+                m,
+            )
+        elif joint.get("type") not in ("fixed", None):
+            actuated.add(name)
+    for name, (target, mult, off, elem) in mimics.items():
+        depth = 0
+        while target in mimics and depth < 8:
+            t2, m2, o2, _ = mimics[target]
+            mult, off, target = mult * m2, mult * o2 + off, t2
+            depth += 1
+        if target in actuated:
+            elem.set("joint", target)
+            elem.set("multiplier", repr(mult))
+            elem.set("offset", repr(off))
+    return ET.tostring(root, encoding="unicode")
 
 
 def fetch_flexiv_description(timeout: float = 60.0) -> Optional[Path]:

@@ -87,7 +87,16 @@ class RobotViz:
                 pass
 
         # -- measured robot ---------------------------------------------------
+        # The mesh mirror is driven BY NAME, never by position: the vendor URDF
+        # lists the gripper's drive joint (finger_width_joint) FIRST among the
+        # actuated joints, so blindly feeding state.q would twist the gripper
+        # with joint1. The GN01 gripper is fully articulated through the URDF's
+        # mimic chain (knuckle = 9.404*width - 0.155, the same calibration the
+        # MJCF uses), driven directly by the streamed gripper width in metres.
         self._urdf_vis = None
+        self._arm_joint_idx: list = []
+        self._width_joint_idx: Optional[int] = None
+        self._cfg_len = 0
         if model is not None:
             try:
                 urdf = assets.load_urdf(Path(model))
@@ -96,17 +105,34 @@ class RobotViz:
                 self._urdf_vis = ViserUrdf(
                     self.server, urdf_or_path=urdf, root_node_name="/robot/arm"
                 )
+                names = list(urdf.actuated_joint_names)
+                self._cfg_len = len(names)
+                self._arm_joint_idx = [
+                    names.index(f"joint{i}") for i in range(1, 8) if f"joint{i}" in names
+                ]
+                if len(self._arm_joint_idx) != 7:
+                    # non-vendor naming: first seven non-gripper actuated joints
+                    self._arm_joint_idx = [
+                        i for i, n in enumerate(names) if "finger" not in n.lower()
+                    ][:7]
+                if "finger_width_joint" in names:
+                    self._width_joint_idx = names.index("finger_width_joint")
             except Exception as e:  # noqa: BLE001  -- assets are never load-bearing
                 print(f"[RobotViz] URDF load failed ({type(e).__name__}: {e}); "
                       "running in frames mode")
+                self._urdf_vis = None
         self._tcp = self.server.scene.add_frame(
             "/robot/tcp", axes_length=0.07, axes_radius=0.0035
         )
         # Parametric gripper jaws under the TCP frame, driven by the streamed
-        # width (the GN01 4-bar mesh articulation is a phase-2 fidelity item).
+        # width -- the frames-mode stand-in. Hidden when the URDF brings the
+        # real articulated GN01 mesh (its mimic chain shows the true fingers).
         jaw = dict(color=(70, 70, 80), dimensions=(0.012, 0.004, 0.05))
         self._jaw_l = self.server.scene.add_box("/robot/tcp/jaw_l", **jaw)
         self._jaw_r = self.server.scene.add_box("/robot/tcp/jaw_r", **jaw)
+        if self._width_joint_idx is not None:
+            self._jaw_l.visible = False
+            self._jaw_r.visible = False
         # Geometry handles in viser expose transform properties only; dynamic
         # geometry (trail / workspace box) is refreshed by re-adding under the
         # SAME name, which atomically replaces the previous node.
@@ -256,7 +282,13 @@ class RobotViz:
         self._jaw_r.position = (0.0, -half, 0.02)
         if self._urdf_vis is not None:
             try:
-                self._urdf_vis.update_cfg(np.asarray(state.q, float))
+                cfg = np.zeros(self._cfg_len)
+                q = np.asarray(state.q, float)
+                for k, idx in enumerate(self._arm_joint_idx[: len(q)]):
+                    cfg[idx] = q[k]
+                if self._width_joint_idx is not None:
+                    cfg[self._width_joint_idx] = max(float(state.gripper_width), 0.0)
+                self._urdf_vis.update_cfg(cfg)
             except Exception:  # mismatched DOF / actuated-joint count: go frames-only
                 self._urdf_vis = None
         # trail (same-name re-add: geometry handles have no .points setter)

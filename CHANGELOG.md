@@ -6,6 +6,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-12
+
+### Added: REAL mesh arm + articulated GN01 gripper in the live mirror
+
+The mesh mirror now shows the actual Rizon 4s and a fully articulating GN01
+gripper (the advisor's ask: see the real arm and gripper move, not stand-ins):
+
+- **URDF generation from the vendor xacro sources** (`flexiv_description`
+  ships no committed URDF): standalone `xacro` (no ROS) with
+  `$(find ...)` shadow substitution, cached self-contained output.
+- **Nested mimic chains flattened**: the GN01 4-bar chains mimics two levels
+  deep; yourdfpy resolves one level only, freezing five of six finger joints
+  (and warning at 20 Hz). Transitive composition of multiplier/offset points
+  every mimic at the actuated `finger_width_joint`, so BOTH fingers
+  articulate -- driven directly by the streamed gripper width in metres (the
+  vendor mimic coefficients 9.404/-0.155 equal our MJCF calibration).
+- **Mesh paths absolutized** (vendor mixes `package://` and package-relative
+  paths; both break outside a ROS workspace).
+- **Joint mapping by NAME** (`joint1..joint7` + `finger_width_joint`): the
+  URDF lists the gripper drive FIRST among actuated joints, so positionally
+  feeding `state.q` would twist the gripper with joint 1. Parametric jaw
+  glyphs auto-hide when the mesh gripper is present.
+- `xacro` added to the `[viz]` extra; asset tests incl. a both-fingers
+  articulation regression; verified live in a browser (arm sweeping, gripper
+  opening/closing, intended-motion preview overlaid on the mesh robot).
+
 ## [0.1.2] - 2026-06-11
 
 ### Added: live visualization + intended-motion preview (`[viz]` extra)
@@ -175,7 +201,8 @@ First public release.
   teleop; `RecedingHorizonRunner` + `RemotePolicyClient` (the policy-server seam).
 - PyPI Trusted Publishing release workflow.
 
-[Unreleased]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ZihaoLu001/flexiv_control/releases/tag/v0.1.0
