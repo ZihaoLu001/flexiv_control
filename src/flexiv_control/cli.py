@@ -6,6 +6,8 @@ Subcommands::
     flexiv-control home   --backend fake                 # send the arm home
     flexiv-control state  --backend fake                 # print one RobotState
     flexiv-control demo                                  # offline FakeBackend demo
+    flexiv-control viz    --connect <robot-pc>           # live browser mirror
+                                                         # (pip install flexiv-control[viz])
 
 Nothing here needs hardware unless you pass ``--backend flexiv_rdk``.
 """
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 import numpy as np
 
@@ -96,6 +99,57 @@ def _cmd_demo(args) -> int:  # noqa: ARG001
     return 0
 
 
+def _cmd_viz(args) -> int:
+    """Live browser mirror of a running robot/server (safety + debugging).
+
+    Connects READ-ONLY: a monitor must never own the arm, so this uses a bare
+    ``RemoteRobot.connect()`` (no lease) -- ``get_state``/``get_safety_profile``
+    are lease-free by design and are served from per-tick snapshots, so the
+    mirror never blocks a running chunk."""
+    try:
+        from .viz import RobotViz
+        from .viz import assets as viz_assets
+    except ImportError as e:
+        print(f'[flexiv-control] the viz extra is not installed: {e}\n'
+              '  pip install "flexiv-control[viz]"')
+        return 1
+
+    model = args.model
+    if model is None and not args.no_model:
+        model = viz_assets.ensure_rizon_urdf(download=args.fetch_assets)
+        if model is None:
+            print("[flexiv-control] no Rizon URDF found -- running in frames mode "
+                  "(TCP frame + trail + planned path; fully functional).\n"
+                  "  For the mesh mirror: set FLEXIV_DESCRIPTION_DIR to a checkout of\n"
+                  "  github.com/flexivrobotics/flexiv_description (branch humble-v1),\n"
+                  "  or re-run with --fetch-assets to download it into ~/.cache.")
+
+    if args.connect:
+        host, _, port = args.connect.partition(":")
+        from .client.remote_robot import RemoteRobot
+        from .server import protocol as P
+
+        robot = RemoteRobot(host, port=int(port) if port else P.DEFAULT_PORT)
+        robot.connect()  # NO lease: monitoring must not own the arm
+        print(f"[flexiv-control] mirroring {host} (read-only, no lease)")
+    else:
+        robot = _robot(args)
+        robot.connect()
+        print(f"[flexiv-control] mirroring a local {robot.cfg.backend!r} backend")
+
+    viz = RobotViz(model=model, port=args.viz_port, state_hz=args.hz)
+    viz.attach(robot)
+    print(f"[flexiv-control] open {viz.url} in a browser (ctrl-c to stop)")
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        print("\n[flexiv-control] stopping viz")
+        viz.stop()
+        robot.disconnect()
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="flexiv-control", description=__doc__)
     p.add_argument("--version", action="version", version=f"flexiv-control {__version__}")
@@ -122,6 +176,23 @@ def main(argv=None) -> int:
 
     d = sub.add_parser("demo", help="offline FakeBackend demo (no hardware)")
     d.set_defaults(func=_cmd_demo)
+
+    v = sub.add_parser(
+        "viz", parents=[common],
+        help="live browser mirror + intended-motion preview (flexiv-control[viz])",
+    )
+    v.add_argument("--connect", default=None, metavar="HOST[:PORT]",
+                   help="mirror a running 'flexiv-control serve' (read-only, no lease); "
+                        "omit to mirror a local backend (e.g. --backend fake)")
+    v.add_argument("--model", default=None, help="path to a Rizon URDF for the mesh mirror")
+    v.add_argument("--no-model", action="store_true",
+                   help="skip URDF resolution; frames mode only")
+    v.add_argument("--fetch-assets", action="store_true",
+                   help="allow downloading flexiv_description into ~/.cache for the mesh mirror")
+    v.add_argument("--hz", type=float, default=20.0, help="state poll rate (default 20)")
+    v.add_argument("--viz-port", type=int, default=8080,
+                   help="port for the browser page (default 8080)")
+    v.set_defaults(func=_cmd_viz)
 
     args = p.parse_args(argv)
     return args.func(args)

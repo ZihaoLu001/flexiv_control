@@ -46,6 +46,9 @@ teleop = ["pyspacemouse"]
 yaml = ["pyyaml"]
 # MuJoCo simulation backend.
 mujoco = ["mujoco>=3.0"]
+# Live browser visualization: robot mirror + intended-motion preview
+# (viser web viewer + yourdfpy URDF kinematics for the cosmetic mesh arm).
+viz = ["viser>=1.0,<2", "yourdfpy>=0.0.53"]
 # Dev / CI.
 dev = ["pytest>=7", "pytest-timeout", "ruff"]
 

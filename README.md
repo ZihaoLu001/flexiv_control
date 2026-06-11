@@ -59,6 +59,11 @@ Polymetis, frankapy, SERL/HIL-SERL, and LeRobot converged on
   SpaceMouse teleoperator, all on the same contract.
 - **Multi-user safe** — an in-process lease and a host-wide lock so two processes
   can't fight over the arm.
+- **See what it WILL do** — `flexiv-control viz` mirrors the robot live in any
+  browser on the LAN and previews each chunk's **intended motion** (the true
+  per-tick command path, time-colored, with gripper events, a workspace box,
+  an animated ghost, and an optional Approve/Reject gate) before it executes —
+  for safety and debugging. See [docs/visualization.md](docs/visualization.md).
 - **Optional, not required** — a numpy-only cross-process server + `RemoteRobot`,
   a C++ 1 kHz real-time daemon, and a ROS 2 overlay. **The core needs only numpy.**
 
@@ -78,6 +83,7 @@ pip install -e ".[rl]"        # + Gymnasium env
 pip install -e ".[teleop]"    # + SpaceMouse
 pip install -e ".[lerobot]"   # + LeRobot data/training
 pip install -e ".[mujoco]"    # + MuJoCo simulation backend
+pip install -e ".[viz]"       # + live browser visualization (viser)
 pip install -e ".[flexiv]"    # + flexivrdk (real hardware; RDK v1.x)
 pip install -e ".[dev]"       # + pytest, ruff
 ```
@@ -157,6 +163,7 @@ real-time modes) — sharing the same contract. The
 | [safety.md](docs/safety.md) | profiles, the filter, the shipped profiles, tuning |
 | [flexiv_setup.md](docs/flexiv_setup.md) | bringing up a real Rizon, licenses, first-run checklist |
 | [versions.md](docs/versions.md) | RDK version sensitivity and the `# VERIFY:` markers |
+| [visualization.md](docs/visualization.md) | live browser mirror + intended-motion preview (`[viz]`) |
 | [integration_planner.md](docs/integration_planner.md) · [_mpc](docs/integration_mpc.md) · [_rl](docs/integration_rl.md) · [_teleop](docs/integration_teleop.md) | per-use-case integration guides |
 
 ## Safety

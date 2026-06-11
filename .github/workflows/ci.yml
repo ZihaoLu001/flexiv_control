@@ -64,6 +64,23 @@ jobs:
           print("core-only smoke OK; version", fc.__version__)
           PY
 
+  # Viz job: installs the viz extra (viser + yourdfpy) and runs the scene-level
+  # tests headless (a ViserServer needs no browser). The numpy-only preview
+  # math runs in the main `test` job; this guards the viser integration.
+  viz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install (core + dev + viz extra)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,viz]"
+      - name: Viz scene tests (headless)
+        run: pytest tests/test_viz_preview.py tests/test_viz_scene.py -q
+
   # MuJoCo sim job: installs the mujoco extra and runs the mesh-free DLS-IK
   # regression (no robot model / meshes needed), so the sim backend's IK math is
   # guarded in CI. The full Rizon-MJCF sim test stays local (needs the model).

@@ -6,6 +6,38 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-11
+
+### Added: live visualization + intended-motion preview (`[viz]` extra)
+
+`flexiv_control.viz` -- a browser-based live mirror (viser) for safety and
+debugging, viewable from any machine on the LAN:
+
+- **Live robot mirror**: optional URDF mesh arm (`flexiv_description`, with a
+  consented asset fetcher + frames-mode fallback), an authoritative TCP frame
+  drawn from the STREAMED `tcp_pose` (never local FK -- flexiv_rdk #82
+  documented >4 cm URDF/TCP drift), parametric gripper jaws, a measured TCP
+  trail, the active safety profile's workspace box (amber=clip / red=reject,
+  re-polled live), and a wrench bar + mode/stop/lease/loop-health HUD.
+- **Intended-motion preview** (the headline): `RobotViz.preview_chunk` renders
+  the chunk's TRUE per-tick command stream -- the executor's own
+  `for_execution` resolution, tightening-only `min(chunk, profile)` caps, and
+  the real interpolator, so time-stretching is visible -- as a time-colored
+  path with waypoint knots, gripper open/close glyphs, the terminal pose, an
+  animated scrubbable ghost TCP, and `validate_chunk` warnings. A regression
+  test pins preview == executed command stream.
+- **Go/no-go gate**: `viz.gate()` plugs into `RecedingHorizonRunner(on_propose=)`;
+  refuses stale previews (live TCP moved > 5 mm / 2 deg since planning) and,
+  with `require_click=True`, blocks on browser Approve/Reject buttons.
+  `viz.on_step` flashes the outcome and overlays commanded-vs-measured paths
+  from `record=True` trajectories.
+- **CLI**: `flexiv-control viz --connect <robot-pc>` -- a read-only standalone
+  mirror that NEVER takes the lease (monitoring must not own the arm;
+  `attach()` enforces this).
+- numpy-only preview math (`flexiv_control.viz.preview`) stays importable and
+  tested without viser; `examples/08_live_viz.py`; `docs/visualization.md`;
+  a `viz` CI job.
+
 ## [0.1.1] - 2026-06-11
 
 Driven by a consumer friction audit (the ActAhead real2sim2real runner): four
@@ -143,6 +175,7 @@ First public release.
   teleop; `RecedingHorizonRunner` + `RemotePolicyClient` (the policy-server seam).
 - PyPI Trusted Publishing release workflow.
 
-[Unreleased]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ZihaoLu001/flexiv_control/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ZihaoLu001/flexiv_control/releases/tag/v0.1.0
