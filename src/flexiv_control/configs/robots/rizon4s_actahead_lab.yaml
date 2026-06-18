@@ -4,8 +4,8 @@
 robot_id: rizon4s_actahead_lab
 backend: fake
 robot_sn: "Rizon4s-062626"
-# GN01 gripper: set to the device name your Flexiv RDK / Elements reports for it.
-gripper_name: ""
+# GN01 gripper: the device name Flexiv Elements -> Settings -> Device reports for it.
+gripper_name: "Flexiv-GN01"
 n_joints: 7
 control_hz: 100.0
 default_safety_profile: actahead_lab

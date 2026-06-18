@@ -176,25 +176,37 @@ class FlexivRdkBackend(RobotBackend):
         except Exception:
             pass
 
-        if self._gripper_name is not None:
+        if self._gripper_name:  # non-empty device name required to enable a gripper
             self._gripper = flexivrdk.Gripper(self._robot)  # VERIFY
-            # RDK v1.x: Gripper.Init() (blocking, no args). Older APIs used
-            # Enable(name). Try the v1.x form first, fall back, and SURFACE a
-            # failure (a warning) instead of silently swallowing it.
+            # RDK v1.x gripper bring-up is TWO steps and ORDER MATTERS:
+            #   1. Enable(name) -- enable the NAMED gripper DEVICE (the name is the
+            #      one Flexiv Elements -> Settings -> Device reports for the gripper).
+            #   2. Init()       -- home/initialize the fingers (blocking).
+            # Calling Init() WITHOUT Enable(name) first fails with
+            # "[flexiv::rdk::Gripper::Init] No gripper enabled" and leaves every
+            # gripper command a silent no-op -- which is exactly the trap this used
+            # to fall into (it tried Init() first and never reached Enable). Surface
+            # any failure as a warning rather than swallowing it.
             try:
+                if hasattr(self._gripper, "Enable"):
+                    self._gripper.Enable(self._gripper_name)
                 if hasattr(self._gripper, "Init"):
                     self._gripper.Init()
-                elif hasattr(self._gripper, "Enable"):
-                    self._gripper.Enable(self._gripper_name)
             except Exception as e:  # pragma: no cover - hardware-only path
                 import warnings
 
                 warnings.warn(
-                    f"gripper init failed ({e}); gripper commands will be no-ops.",
+                    f"gripper init failed for device {self._gripper_name!r} ({e}); "
+                    f"gripper commands will be no-ops. Check the device name against "
+                    f"Flexiv Elements -> Settings -> Device.",
                     RuntimeWarning,
                     stacklevel=2,
                 )
                 self._gripper = None
+        elif self._gripper_name is not None:
+            # Explicit empty name ("") = no gripper configured; skip cleanly (no
+            # scary warning) rather than attempting an init that cannot succeed.
+            self._gripper = None
         self._connected = True
 
     def disconnect(self) -> None:
