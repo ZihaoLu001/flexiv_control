@@ -6,6 +6,23 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-06-18
+
+### Fixed: GN01 gripper "No gripper enabled" no-op on real hardware
+
+The `flexiv_rdk` backend created the `Gripper` but called `Gripper.Init()` WITHOUT
+first calling `Gripper.Enable(device_name)`. On RDK v1.x the gripper device must be
+enabled by name before `Init()`, so on real hardware this failed with
+`[flexiv::rdk::Gripper::Init] No gripper enabled` and every gripper command silently
+became a no-op. The backend now does `Enable(gripper_name)` → `Init()`, guarded on a
+non-empty name (an empty `gripper_name` means "no gripper configured" and is skipped
+cleanly), with a clearer failure message pointing at Flexiv Elements → Settings →
+Device. The shipped `rizon4s_actahead_lab` config now sets `gripper_name: "Flexiv-GN01"`.
+
+Hardware-verified on Rizon4s-062626 (GN01): the server enables the gripper without a
+warning and a move to 0.085 m settles open (0.0855 m), aligning the real gripper with
+the simulation home.
+
 ## [0.1.3] - 2026-06-12
 
 ### Added: REAL mesh arm + articulated GN01 gripper in the live mirror
