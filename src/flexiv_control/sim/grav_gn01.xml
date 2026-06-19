@@ -75,8 +75,14 @@
         <inertial pos="0 0 0.029" mass="1e-3" diaginertia="1e-6 1e-6 1e-6"/>
         <geom type="mesh" mesh="grav_innerbar" euler="0 0 1.5708" material="flexiv_black" contype="0" conaffinity="0"/>
       </body>
-      <!-- gripper TCP (between the closed fingertips) -->
-      <site name="tcp" pos="0 0 0.18" size="0.005" rgba="0 1 0 0.6"/>
+      <!-- Gripper TCP = the official Grav closed_fingers_tcp (grav_macro.xacro
+           closed_fingers_tcp xyz "0 0 0.20"): the closed fingertip-contact plane,
+           measured here at z about 0.199 with the 4-bar driven to width=0. The
+           open-finger reference grav_tcp is at 0.15. (Previously 0.18, a point with
+           no physical referent whose "between the closed fingertips" label was off by
+           about 19 mm.) -->
+      <site name="tcp" pos="0 0 0.20" size="0.005" rgba="0 1 0 0.6"/>
+      <site name="tcp_open" pos="0 0 0.15" size="0.004" rgba="0 0.7 1 0.5"/>
     </body>
   </worldbody>
   <equality>
