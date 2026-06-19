@@ -174,12 +174,17 @@ real-time modes) — sharing the same contract. The
 
 ## Status
 
-Alpha (`0.1.0`). The Python core, safety, action contract, server/client,
-Gymnasium env, teleop, and the **MuJoCo simulation (including the GN01 gripper)**
-are tested in CI (Python 3.8 / 3.10 / 3.12). The **real-hardware** (`flexiv_rdk`)
-and the **C++ / ROS 2** paths are hardware-unvalidated and carry `# VERIFY:`
-markers to confirm against your installed versions before first use
-([docs/versions.md](docs/versions.md)).
+Alpha. The Python core, safety, action contract, server/client, Gymnasium env,
+teleop, and the **MuJoCo simulation (including the GN01 gripper)** are tested in CI
+(Python 3.8 / 3.10 / 3.12). The **`flexiv_rdk` real-hardware backend is now
+HARDWARE-VALIDATED** on a **Rizon4s (serial Rizon4s-062626, RDK-Professional,
+flexivrdk 1.7)** for the **NRT pick-place path**: enable → F/T-sensor zero →
+NRT_CARTESIAN_MOTION_FORCE (cartesian impedance) → NRT joint chunks → GN01 gripper →
+`go_home_safe` all run end-to-end (see CHANGELOG `0.1.5`/`0.1.4`). Four RDK-1.7 API
+mismatches found there are fixed: gripper `Enable(name)`, the `Mode` enum (1.7 has no
+`RT_*`), `ZeroFTSensor`-on-connect (force-mode prerequisite), and `SendJointPosition`'s
+**five** list args. The **C++ / ROS 2** paths remain unvalidated. RDK is version-matched
+to firmware — see [docs/versions.md](docs/versions.md) before use on a different setup.
 
 ## Development
 

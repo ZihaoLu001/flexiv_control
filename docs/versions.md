@@ -23,11 +23,27 @@ use:
 
 This backend assumes the **v1.x** column: `Robot(robot_sn)`, `states().tcp_pose`,
 `SendCartesianMotionForce(pose, ...)`, `SetCartesianImpedance(K_x, Z_x)`,
-`SendJointPosition(positions, velocities, max_vel, max_acc)`,
-`SetForceControlFrame(CoordType)`, gripper `Move(width, velocity, force_limit)`.
+`SendJointPosition(positions, velocities, accelerations, max_vel, max_acc)`,
+`SetForceControlFrame(CoordType)`, gripper `Enable(name)` → `Init()` → `Move(width, velocity, force_limit)`.
 It will **not** work as-is on v0.x (different constructor + camelCase) or v2.x
 (dict/`JointGroup` API). If your robot ships v2.x, the changes are confined to
 this one backend file. Don't upgrade RDK without the matched firmware.
+
+### Hardware-verified on flexivrdk **1.7** (Rizon4s-062626) — the exact gotchas
+
+These four were confirmed (and fixed) against a live robot; bake them in if you port:
+- **`Mode` enum has only `IDLE` + `NRT_*` + `UNKNOWN`** — there are **no `RT_*` members** in
+  1.7. Building a `ControlMode→Mode` map that names `Mode.RT_JOINT_POSITION` etc.
+  `AttributeError`s; guard each entry by `hasattr`.
+- **`SendJointPosition` takes FIVE `list[float]`**: `(target_pos, target_vel, target_acc,
+  max_vel, max_acc)`. Passing four (dropping `target_acc`) `TypeError`s. Pass plain
+  `float`s — `np.float64` is rejected.
+- **Force-control modes need the F/T sensor zeroed first**: before `SwitchMode(
+  NRT_CARTESIAN_MOTION_FORCE)`, run the `ZeroFTSensor` primitive in
+  `NRT_PRIMITIVE_EXECUTION` (arm at rest), else event **301004** faults the switch. The
+  backend does this once in `connect()`.
+- **Gripper**: `Gripper.Enable(device_name)` (the name from Flexiv Elements → Settings →
+  Device, e.g. `Flexiv-GN01`) **before** `Init()`. `Init()` alone → "No gripper enabled".
 
 ## The `# VERIFY:` convention
 
