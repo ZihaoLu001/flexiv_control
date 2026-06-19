@@ -6,6 +6,29 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-19
+
+### Fixed: 3 more flexiv_rdk-backend bugs from the first real-hardware session
+
+The `flexiv_rdk` backend had never touched a real robot; the first live Rizon4s-062626
+session surfaced three RDK-1.7 API/state mismatches that each blocked motion:
+
+- **`Mode` enum**: `_rdk_mode` referenced `Mode.RT_*` members that flexivrdk 1.7 does not
+  expose (its `Mode` has only `IDLE` + `NRT_*` + `UNKNOWN`), so building the map
+  `AttributeError`'d on the first `SwitchMode`. Each entry is now added only if the member
+  exists; the NRT pick-place workload is unaffected.
+- **F/T sensor zeroing**: force-control modes (`NRT_CARTESIAN_MOTION_FORCE`, our cartesian
+  impedance) fault with event 301004 unless the 6-DoF F/T sensor is zeroed first. `connect()`
+  now runs the `ZeroFTSensor` primitive once (arm at rest) — a no-op on robots without an
+  F/T sensor.
+- **`SendJointPosition`**: flexivrdk 1.7 takes FIVE `list[float]` args
+  (pos, vel, acc, max_vel, max_acc); the backend passed four (no acc) → `TypeError` that
+  broke the home-restore. Added the acceleration vector and plain-`float` conversion
+  (np.float64 is rejected).
+
+All HARDWARE-VERIFIED on Rizon4s-062626 (RDK-Professional, flexivrdk 1.7): enable →
+F/T-zero → cartesian-impedance → NRT joint chunks → `go_home_safe` all succeed.
+
 ## [0.1.4] - 2026-06-18
 
 ### Fixed: GN01 gripper "No gripper enabled" no-op on real hardware
