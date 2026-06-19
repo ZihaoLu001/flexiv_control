@@ -49,20 +49,29 @@ except Exception as exc:  # pragma: no cover - depends on environment
 
 
 # Map our ControlMode -> flexivrdk.Mode. Built lazily because the enum only
-# exists once flexivrdk is importable. # VERIFY enum member names per RDK version.
+# exists once flexivrdk is importable. The RT_* modes are not exposed by every
+# RDK build (e.g. flexivrdk 1.7's Mode enum has ONLY IDLE + NRT_* + UNKNOWN), so
+# each entry is added ONLY if its member exists -- otherwise building the table
+# AttributeError'd on the first SwitchMode (the NRT pick-place workload never
+# needs the RT modes). # VERIFY enum member names per RDK version.
 def _rdk_mode(mode: ControlMode):
     M = flexivrdk.Mode
-    table = {
-        ControlMode.IDLE: M.IDLE,
-        ControlMode.NRT_JOINT_POSITION: M.NRT_JOINT_POSITION,
-        ControlMode.NRT_JOINT_IMPEDANCE: M.NRT_JOINT_IMPEDANCE,
-        ControlMode.NRT_CARTESIAN_MOTION_FORCE: M.NRT_CARTESIAN_MOTION_FORCE,
-        ControlMode.NRT_PRIMITIVE: M.NRT_PRIMITIVE_EXECUTION,
-        ControlMode.RT_JOINT_POSITION: M.RT_JOINT_POSITION,
-        ControlMode.RT_JOINT_IMPEDANCE: M.RT_JOINT_IMPEDANCE,
-        ControlMode.RT_CARTESIAN_MOTION_FORCE: M.RT_CARTESIAN_MOTION_FORCE,
-        ControlMode.RT_JOINT_TORQUE: M.RT_JOINT_TORQUE,
+    spec = {
+        ControlMode.IDLE: "IDLE",
+        ControlMode.NRT_JOINT_POSITION: "NRT_JOINT_POSITION",
+        ControlMode.NRT_JOINT_IMPEDANCE: "NRT_JOINT_IMPEDANCE",
+        ControlMode.NRT_CARTESIAN_MOTION_FORCE: "NRT_CARTESIAN_MOTION_FORCE",
+        ControlMode.NRT_PRIMITIVE: "NRT_PRIMITIVE_EXECUTION",
+        ControlMode.RT_JOINT_POSITION: "RT_JOINT_POSITION",
+        ControlMode.RT_JOINT_IMPEDANCE: "RT_JOINT_IMPEDANCE",
+        ControlMode.RT_CARTESIAN_MOTION_FORCE: "RT_CARTESIAN_MOTION_FORCE",
+        ControlMode.RT_JOINT_TORQUE: "RT_JOINT_TORQUE",
     }
+    table = {cm: getattr(M, name) for cm, name in spec.items() if hasattr(M, name)}
+    if mode not in table:
+        raise RuntimeError(
+            f"control mode {mode} maps to flexivrdk.Mode.{spec[mode]}, which this "
+            f"flexivrdk build does not expose (available: {[n for n in spec.values() if hasattr(M, n)]})")
     return table[mode]
 
 
@@ -175,6 +184,26 @@ class FlexivRdkBackend(RobotBackend):
             raise
         except Exception:
             pass
+
+        # Force-control modes (NRT_CARTESIAN_MOTION_FORCE -- our cartesian impedance)
+        # REQUIRE the 6-DoF F/T sensor to be zeroed first, else SwitchMode faults with
+        # event 301004 ("FT sensor is not calibrated using primitive [ZeroFTSensor]").
+        # Zero it once here, at connect, with the arm at rest (no contact) -- a no-op on
+        # robots without an F/T sensor. HARDWARE-VERIFIED on Rizon4s-062626.
+        try:
+            M = flexivrdk.Mode
+            if hasattr(M, "NRT_PRIMITIVE_EXECUTION"):
+                self._robot.SwitchMode(M.NRT_PRIMITIVE_EXECUTION)
+                self._robot.ExecutePrimitive("ZeroFTSensor", dict())
+                t0 = time.time()
+                while self._robot.busy() and time.time() - t0 < 10.0:
+                    time.sleep(0.2)
+                self._robot.SwitchMode(M.IDLE)
+        except Exception as e:  # pragma: no cover - hardware-only path
+            import warnings
+            warnings.warn(
+                f"ZeroFTSensor at connect failed ({e}); entering a force-control mode "
+                f"may fault until the F/T sensor is zeroed.", RuntimeWarning, stacklevel=2)
 
         if self._gripper_name:  # non-empty device name required to enable a gripper
             self._gripper = flexivrdk.Gripper(self._robot)  # VERIFY
@@ -338,18 +367,19 @@ class FlexivRdkBackend(RobotBackend):
             self._robot.SendCartesianMotionForce(pose, wr)
 
     def stream_joint(self, q: np.ndarray) -> None:
-        q = list(np.asarray(q, float))
+        q = [float(v) for v in np.asarray(q, float)]   # plain floats (flexivrdk rejects np.float64)
         zeros = [0.0] * self.n_joints
         if self._mode.is_realtime:
             # RT: StreamJointPosition(positions, velocities, accelerations). (RDK v1.x)
             self._robot.StreamJointPosition(q, zeros, zeros)
         else:
-            # NRT: SendJointPosition(positions, velocities, max_vel, max_acc) -- the
-            # 3rd/4th args are trajectory *limits*, not a target acceleration. The
-            # earlier 5-arg form (extra acc vector) is wrong for RDK v1.x.
+            # NRT: flexivrdk 1.7 SendJointPosition takes FIVE list[float] args:
+            # (target_pos, target_vel, target_acc, max_vel, max_acc). The backend
+            # previously passed four (dropping target_acc), which TypeError'd and
+            # broke the home-restore. HARDWARE-VERIFIED signature on Rizon4s-062626.
             max_vel = [1.0] * self.n_joints
             max_acc = [1.0] * self.n_joints
-            self._robot.SendJointPosition(q, zeros, max_vel, max_acc)
+            self._robot.SendJointPosition(q, zeros, zeros, max_vel, max_acc)
 
     # -- gripper ------------------------------------------------------------
     def move_gripper(self, cmd: GripperCommand) -> None:
