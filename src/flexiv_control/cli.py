@@ -68,6 +68,38 @@ def _cmd_home(args) -> int:
     return 0
 
 
+def _cmd_zero_ft(args) -> int:
+    """Zero the 6-DoF F/T sensor (fixes Flexiv event 301004 after power-on).
+
+    A manual zero in Elements' MANUAL mode does NOT carry into remote/RDK mode;
+    force control faults until ZeroFTSensor runs in the remote session. With
+    --connect HOST[:PORT] this runs on a RUNNING 'flexiv-control serve' via its
+    live RDK session (no restart). Otherwise it opens a direct backend (no server
+    may be holding the robot). Robot must be Auto(Remote)+Enabled, arm at rest,
+    NO external contact."""
+    if getattr(args, "connect", None):
+        host, _, port = args.connect.partition(":")
+        from .client.remote_robot import RemoteRobot
+        from .server import protocol as P
+
+        robot = RemoteRobot(host, port=int(port) if port else P.DEFAULT_PORT)
+        robot.connect()
+        robot.acquire_lease("cli-zero-ft")
+        try:
+            robot.zero_ft_sensor()
+            print(f"[flexiv-control] F/T sensor zeroed via {host} (running server, no restart)")
+        finally:
+            robot.release_lease()
+            robot.disconnect()
+        return 0
+    robot = _robot(args)
+    with robot:
+        robot.acquire_lease("cli-zero-ft")
+        robot.zero_ft_sensor()
+        print(f"[flexiv-control] F/T sensor zeroed (backend={robot.cfg.backend!r})")
+    return 0
+
+
 def _cmd_state(args) -> int:
     robot = _robot(args)
     with robot:
@@ -170,6 +202,13 @@ def main(argv=None) -> int:
 
     h = sub.add_parser("home", parents=[common], help="send the arm to its home posture")
     h.set_defaults(func=_cmd_home)
+
+    z = sub.add_parser("zero-ft", parents=[common],
+                       help="zero the 6-DoF F/T sensor (fix event 301004 after power-on)")
+    z.add_argument("--connect", default=None, metavar="HOST[:PORT]",
+                   help="run on a RUNNING 'flexiv-control serve' via its live RDK session "
+                        "(no restart); omit to open a direct backend (no server running)")
+    z.set_defaults(func=_cmd_zero_ft)
 
     st = sub.add_parser("state", parents=[common], help="print one RobotState and exit")
     st.set_defaults(func=_cmd_state)

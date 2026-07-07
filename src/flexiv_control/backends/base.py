@@ -82,6 +82,13 @@ class RobotBackend(abc.ABC):
     @abc.abstractmethod
     def stop(self) -> None: ...
 
+    def zero_ft_sensor(self) -> None:
+        """Zero (bias-calibrate) the 6-DoF force/torque sensor. Force-control
+        modes fault with event 301004 until this has run in the current session.
+        Concrete default is a no-op so backends without an F/T sensor (fake /
+        mujoco) inherit it unchanged; the flexiv_rdk backend overrides it."""
+        return None
+
     def in_fault(self) -> bool:
         """Whether the robot is in a fault / protective-stop state.
 

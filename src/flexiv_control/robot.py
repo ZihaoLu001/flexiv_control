@@ -570,6 +570,15 @@ class Robot:
             time.sleep(0.05)
         return state.gripper_width
 
+    def zero_ft_sensor(self) -> None:
+        """Zero (bias-calibrate) the 6-DoF F/T sensor. Required after power-on
+        before any force-control mode; clears event 301004. The manual zero in
+        Elements' MANUAL mode does NOT carry into remote/RDK mode -- run this in
+        the remote session, arm at rest with no contact. No-op on backends without
+        an F/T sensor (fake/mujoco)."""
+        self._check_lease()
+        self.backend.zero_ft_sensor()
+
     def home(
         self,
         q: Optional[np.ndarray] = None,

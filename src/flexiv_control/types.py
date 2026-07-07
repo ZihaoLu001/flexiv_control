@@ -194,10 +194,17 @@ class GripperCommand:
 
     .. warning:: When ``grasp=True``, the RDK backend calls ``Gripper.Grasp(force)``
        and **ignores** ``width`` entirely -- the fingers close until contact at the
-       force limit. A planner that encodes close-intent by thresholding width must
-       not expect the commanded width to be tracked on hardware. The MuJoCo backend
-       mirrors this (a grasp command drives the fingers closed and lets contact
-       physics stop them) so the sim and real semantics agree.
+       force limit, and on a MISS (no object between the fingers) they slam fully
+       shut to ~0.000 m. A position-actuator MuJoCo gate that drives to a finite
+       close width cannot reproduce that air-close, so a mis-positioned grasp can
+       pass validation in sim yet collapse to an empty grip on hardware (an
+       invisible failure). For a KNOWN-SIZE object, prefer a force-limited
+       ``Gripper.Move(close_width, velocity, force)`` -- set ``grasp=False`` with
+       ``width`` = the just-touch width: it stalls on the object on contact but
+       FLOORS at ``close_width`` on a miss, so the settled width stays non-zero and
+       a "closed on air" failure is detectable. Reserve ``grasp=True`` for blind
+       closes on unknown-size objects. (The MuJoCo backend mirrors the blind close;
+       both drive the fingers closed and let contact stop them.)
     """
 
     width: float = 0.0          # metres

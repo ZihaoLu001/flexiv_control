@@ -120,7 +120,7 @@ class RemoteRobot:
     _MOTION_METHODS = frozenset({
         "execute_cartesian_chunk", "execute_joint_chunk", "move_joint",
         "servo_cartesian_delta", "servo_cartesian_pose",
-        "command_gripper", "home", "go_home_safe",
+        "command_gripper", "home", "go_home_safe", "zero_ft_sensor",
     })
 
     def _call(self, method: str, **params) -> dict:
@@ -362,6 +362,12 @@ class RemoteRobot:
             max_joint_speed=max_joint_speed,
             duration=duration,
         )
+
+    def zero_ft_sensor(self) -> None:
+        """Zero the robot's 6-DoF F/T sensor on the SERVER's live RDK session
+        (clears event 301004 without restarting the server). Needs the lease;
+        run with the arm at rest and no external contact."""
+        self._call("zero_ft_sensor", owner=self.owner)
 
     def go_home_safe(
         self,

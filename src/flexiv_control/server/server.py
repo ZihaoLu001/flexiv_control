@@ -221,6 +221,7 @@ class FlexivControlServer:
             "command_gripper": self._h_command_gripper,
             "home": self._h_home,
             "go_home_safe": self._h_go_home_safe,
+            "zero_ft_sensor": self._h_zero_ft_sensor,
             "stop": self._h_stop,
             "start_servo_loop": self._h_start_servo_loop,
             "servo_stream": self._h_servo_stream,
@@ -387,6 +388,12 @@ class FlexivControlServer:
                 ),
                 duration=None if p.get("duration") is None else float(p["duration"]),
             )
+        return {"ok": True}
+
+    def _h_zero_ft_sensor(self, p: dict) -> dict:
+        owner = self._require_lease(p)
+        with self._motion_lock(owner):
+            self.robot.zero_ft_sensor()
         return {"ok": True}
 
     def _h_go_home_safe(self, p: dict) -> dict:

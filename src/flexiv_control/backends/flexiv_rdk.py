@@ -422,6 +422,24 @@ class FlexivRdkBackend(RobotBackend):
             time.sleep(0.05)
         self._mode = ControlMode.NRT_PRIMITIVE
 
+    def zero_ft_sensor(self) -> None:
+        """Zero the 6-DoF F/T sensor via the NRT 'ZeroFTSensor' primitive, then
+        return to IDLE. Force-control modes (our Cartesian impedance) fault with
+        event 301004 until this has run in the CURRENT remote/RDK session -- a
+        manual zero in Elements' MANUAL mode does NOT carry over. Run with the arm
+        AT REST and NO external contact. HARDWARE-VERIFIED on Rizon4s (mirrors the
+        connect-time zero, callable on demand so a session need not restart)."""
+        M = flexivrdk.Mode
+        if not hasattr(M, "NRT_PRIMITIVE_EXECUTION"):
+            return
+        self._robot.SwitchMode(M.NRT_PRIMITIVE_EXECUTION)
+        self._robot.ExecutePrimitive("ZeroFTSensor", dict())
+        t0 = time.time()
+        while self._robot.busy() and time.time() - t0 < 10.0:
+            time.sleep(0.2)
+        self._robot.SwitchMode(M.IDLE)
+        self._mode = ControlMode.IDLE
+
     def _primitive_running(self) -> bool:
         """True while an NRT primitive is still executing (best-effort, cross-version)."""
         try:
