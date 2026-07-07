@@ -71,3 +71,28 @@ def test_lease_expires_after_ttl(server):
     b.acquire_lease()  # should succeed: alice's lease expired
     b.close()
     a.close()
+
+
+def test_fresh_lease_owner_does_not_inherit_stale_stop(server):
+    """A dying session's safety stop must not leak into the next session.
+
+    alice latches a stop (client stop / disconnect handler) with no motion in
+    flight, so nothing consumes the cooperative-cancel flag. Pre-fix, bob's
+    FIRST chunk then instant-aborted with ``stop=user dur=0.00`` (observed
+    live on hardware); acquiring the lease as a FRESH owner now clears the
+    stale flag."""
+    srv, port = server
+    a = RemoteRobot("127.0.0.1", port, owner="alice").connect()
+    a.acquire_lease()
+    a.stop()                      # latched; no motion in flight consumes it
+    a.release_lease()
+    a.close()
+
+    b = RemoteRobot("127.0.0.1", port, owner="bob").connect()
+    b.acquire_lease()
+    b.start_cartesian_impedance()
+    res = b.execute_cartesian_chunk(
+        CartesianChunk.from_waypoint_array([[0.45, 0.0, 0.30, 1.0, 20]]))
+    assert res.success, f"first chunk of a fresh session aborted: {res.stop_reason}"
+    assert str(res.stop_reason) != "user"
+    b.close()

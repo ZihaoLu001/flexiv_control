@@ -252,6 +252,18 @@ class FlexivRdkBackend(RobotBackend):
 
     # -- state --------------------------------------------------------------
     def read_state(self) -> RobotState:
+        # Truthful control mode: a robot-side fault / e-stop / power event
+        # resets the ARM to IDLE while this cache still reports the last
+        # commanded motion mode. The executor trusts the reported mode for its
+        # auto-(re)start, so a stale cache turns every subsequent Send* into
+        # '[SendCartesianMotionForce] Robot is not in an applicable control
+        # mode' (observed live after an e-stop recovery). Sync from hardware.
+        if self._mode != ControlMode.IDLE:
+            try:
+                if self._robot.mode() == _rdk_mode(ControlMode.IDLE):
+                    self._mode = ControlMode.IDLE
+            except Exception:  # pragma: no cover - defensive: mode() is optional info
+                pass
         s = self._robot.states()  # VERIFY: states() returns RobotStates
         q = np.asarray(_get(s, "q", default=np.zeros(self.n_joints)), float)
         dq = np.asarray(_get(s, "dq", "dtheta", default=np.zeros(self.n_joints)), float)
@@ -384,6 +396,19 @@ class FlexivRdkBackend(RobotBackend):
     # -- gripper ------------------------------------------------------------
     def move_gripper(self, cmd: GripperCommand) -> None:
         if self._gripper is None:
+            if self._gripper_name:
+                # A gripper was CONFIGURED but failed to enable/init at
+                # connect. Silently no-op'ing its commands turns every grasp
+                # into an invisible failure (the arm pantomimes a pick with
+                # frozen fingers) -- fail loudly instead. Gripper-less setups
+                # set gripper_name '' and skip cleanly.
+                raise RuntimeError(
+                    f"gripper {self._gripper_name!r} was configured but failed "
+                    f"to enable/init at connect; refusing to no-op a gripper "
+                    f"command. Check the device name (Flexiv Elements -> "
+                    f"Settings -> Device), power, and connection -- or set "
+                    f"gripper_name: '' for a gripper-less config."
+                )
             return
         if cmd.grasp:
             self._gripper.Grasp(cmd.force)  # VERIFY

@@ -691,6 +691,17 @@ class Robot:
         the backend itself, so it cannot race the executing thread's stream."""
         self._cancel.set()
 
+    def clear_stop(self) -> None:
+        """Clear a PENDING cooperative cancel that nothing consumed.
+
+        For session boundaries only: a dying client's disconnect handler
+        requests a safety stop, and when no motion is in flight nothing
+        consumes the latched flag -- it then instant-aborts the NEXT
+        session's first chunk (``stop=user dur=0.00``, observed live). The
+        server clears it when a FRESH owner acquires the lease; never call
+        this while another party's motion may be in flight."""
+        self._cancel.clear()
+
     def stop(self) -> None:
         self._cancel.set()
         self.backend.stop()

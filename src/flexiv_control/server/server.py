@@ -239,6 +239,13 @@ class FlexivControlServer:
         # victim's chunk keeps streaming to completion under the thief's lease.
         if force and prev and prev != info.owner:
             self.robot.request_stop()
+        elif prev != info.owner:
+            # A FRESH owner must not inherit the cancel latched by the
+            # previous session (a client disconnect requests a safety stop;
+            # with no motion in flight nothing consumes it, and it would
+            # instant-abort the new session's first chunk with
+            # stop=user dur=0.00 -- observed live).
+            self.robot.clear_stop()
         return {"owner": info.owner, "expires_at": info.expires_at}
 
     def _h_release_lease(self, p: dict) -> dict:
