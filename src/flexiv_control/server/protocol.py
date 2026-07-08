@@ -212,6 +212,10 @@ def chunk_to_dict(c: CartesianChunk) -> dict:
         "max_contact_wrench": None
         if c.max_contact_wrench is None
         else c.max_contact_wrench.tolist(),
+        "contact_wrench_allowance": None
+        if c.contact_wrench_allowance is None
+        else c.contact_wrench_allowance.tolist(),
+        "grip_tracking_gate_m": c.grip_tracking_gate_m,
         "safety_profile": c.safety_profile,
         "frame": c.frame,
         "representation": c.representation.value,
@@ -261,6 +265,10 @@ def chunk_from_dict(d: dict) -> CartesianChunk:
         max_contact_wrench=None
         if d.get("max_contact_wrench") is None
         else np.asarray(d["max_contact_wrench"], float),
+        contact_wrench_allowance=None
+        if d.get("contact_wrench_allowance") is None
+        else np.asarray(d["contact_wrench_allowance"], float),
+        grip_tracking_gate_m=d.get("grip_tracking_gate_m"),
         safety_profile=d.get("safety_profile", ""),
         frame=d.get("frame", "base"),
         representation=ChunkRepresentation(d.get("representation", "absolute")),

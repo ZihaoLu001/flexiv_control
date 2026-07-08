@@ -355,6 +355,12 @@ class FlexivRdkBackend(RobotBackend):
         if nullspace_q is not None and mode.is_cartesian:
             self._robot.SetNullSpacePosture(list(np.asarray(nullspace_q, float)))
 
+    def set_contact_wrench_limit(self, wrench: np.ndarray) -> None:
+        # Only meaningful (and only accepted by the RDK) in Cartesian modes;
+        # the mode-start value comes from set_mode, this updates it mid-mode.
+        if self._mode.is_cartesian:
+            self._robot.SetMaxContactWrench(list(np.asarray(wrench, float).reshape(CART_DOF)))
+
     # -- streaming ----------------------------------------------------------
     def stream_cartesian(self, pose: np.ndarray, wrench: Optional[np.ndarray] = None) -> None:
         pose = list(np.asarray(pose, float).reshape(7))

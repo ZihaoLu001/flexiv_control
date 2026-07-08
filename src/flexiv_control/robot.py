@@ -320,6 +320,17 @@ class Robot:
         result.log["linear_speed_cap"] = lin_cap
         result.log["angular_speed_cap"] = ang_cap
         wrench_cap = self.profile.max_contact_wrench
+        wrench_relaxed = False
+        if chunk.contact_wrench_allowance is not None:
+            # Held-payload headroom: server-clamped to the profile's granted
+            # ceiling (default zero), then ADDED to the profile cap. The chunk
+            # request is a request, never an override.
+            allow = np.minimum(chunk.contact_wrench_allowance,
+                               self.profile.max_wrench_allowance)
+            if np.any(allow > 0):
+                wrench_cap = wrench_cap + allow
+                wrench_relaxed = True
+                result.log["contact_wrench_allowance"] = allow.tolist()
         if chunk.max_contact_wrench is not None:
             wrench_cap = np.minimum(wrench_cap, chunk.max_contact_wrench)
         interp = CartesianChunkInterpolator(
@@ -329,72 +340,131 @@ class Robot:
             max_linear_speed=lin_cap,
             max_angular_speed=ang_cap,
         )
+        if wrench_relaxed:
+            # Track the firmware guard to the same effective cap (it was armed
+            # with the profile value at mode start); restored in the finally.
+            self.backend.set_contact_wrench_limit(wrench_cap)
 
         max_err = 0.0
         max_speed = 0.0
         max_wrench = 0.0
         prev_pos = start.tcp_position.copy()
         prev_cmd_pos = None  # commanded TCP position from the previous tick
+        close_aborted = False
+        close_issued = False  # a closing command actually reached the gripper
         trajectory: list = [] if record else None
         t0 = time.perf_counter()
         t_loop = time.perf_counter()
 
-        for pose, grip in interp:
-            if self._cancel.is_set():
-                self._cancel.clear()
-                self.backend.stop()
-                result.success = False
-                result.stop_reason = StopReason.USER.value
-                break
-            state = self.get_state()
-            # Robot-side fault gate: a collision reflex / protective stop /
-            # E-stop on the robot is invisible to the host-side geometry filter.
-            if self.backend.in_fault():
-                self.backend.stop()
-                result.success = False
-                result.stop_reason = StopReason.BACKEND_FAULT.value
-                break
-            # Per-chunk contact tightening (the filter enforces the profile cap;
-            # this catches a chunk-requested lower cap).
-            if np.any(np.abs(state.wrench) > wrench_cap):
-                self.backend.stop()
-                result.success = False
-                result.stop_reason = StopReason.CONTACT_WRENCH.value
-                break
-            sr = self.filter.filter_cartesian(pose, state)
-            if not sr.ok:
-                self.backend.stop()
-                result.success = False
-                result.stop_reason = sr.reason.value
-                break
-            if sr.clipped:
-                result.clipped = True
-            self.backend.stream_cartesian(sr.pose, wrench=_chunk_wrench(chunk))
-            if grip is not None:
-                self.backend.move_gripper(grip)
-            if trajectory is not None:
-                trajectory.append(
-                    [time.perf_counter() - t0, *sr.pose.tolist(),
-                     *state.tcp_pose.tolist(), *state.wrench.tolist()]
-                )
+        try:
+            for pose, grip in interp:
+                if self._cancel.is_set():
+                    self._cancel.clear()
+                    self.backend.stop()
+                    result.success = False
+                    result.stop_reason = StopReason.USER.value
+                    break
+                state = self.get_state()
+                # Robot-side fault gate: a collision reflex / protective stop /
+                # E-stop on the robot is invisible to the host-side geometry filter.
+                if self.backend.in_fault():
+                    self.backend.stop()
+                    result.success = False
+                    result.stop_reason = StopReason.BACKEND_FAULT.value
+                    break
+                # Per-chunk contact envelope (tightened or payload-relaxed);
+                # the filter below enforces the same effective cap.
+                if np.any(np.abs(state.wrench) > wrench_cap):
+                    self.backend.stop()
+                    result.success = False
+                    result.stop_reason = StopReason.CONTACT_WRENCH.value
+                    break
+                sr = self.filter.filter_cartesian(pose, state,
+                                                  max_contact_wrench=wrench_cap)
+                if not sr.ok:
+                    self.backend.stop()
+                    result.success = False
+                    result.stop_reason = sr.reason.value
+                    break
+                if sr.clipped:
+                    result.clipped = True
+                self.backend.stream_cartesian(sr.pose, wrench=_chunk_wrench(chunk))
+                if grip is not None:
+                    # Close-intent gate: a stalled/deflected descend (impedance
+                    # yield below the wrench cap) leaves the tool at an UNPLANNED
+                    # height -- closing there grasps the wrong geometry (rim
+                    # pinch). Gate CLOSING commands on the instantaneous tracking
+                    # error at the tick the close would fire; once one close is
+                    # skipped, all later closes this chunk are skipped too (the
+                    # follow-up force-grasp would blind-close mid-air). Opens
+                    # always pass. A garbage width read (transient gripper-bus
+                    # failure returns 0.0) must not misclassify -- the width
+                    # comparison only counts against a sane positive reading.
+                    closing = bool(grip.grasp) or (
+                        float(state.gripper_width) > 1e-6
+                        and grip.width < float(state.gripper_width) - 1e-3)
+                    # NEVER gate a grasp=True SUSTAIN once a close was actually
+                    # issued this chunk: the object is (potentially) between the
+                    # fingers, and skipping the force-closure hand-off leaves
+                    # only a stalled position-hold -- the filmed slide-out
+                    # failure -- while mislabeling a physical grasp as
+                    # "no close fired". The gate exists to prevent closing at an
+                    # UNPLANNED height; after a close it has done its job.
+                    gate_active = (chunk.grip_tracking_gate_m is not None
+                                   and not (grip.grasp and close_issued))
+                    if closing and gate_active:
+                        err_now = (float(np.linalg.norm(prev_cmd_pos - state.tcp_position))
+                                   if prev_cmd_pos is not None else 0.0)
+                        if close_aborted or result.clipped or err_now > chunk.grip_tracking_gate_m:
+                            if not close_aborted:
+                                close_aborted = True
+                                result.log["close_aborted"] = {
+                                    "segment": interp.current_segment,
+                                    "tracking_error_m": err_now,
+                                    "gate_m": float(chunk.grip_tracking_gate_m),
+                                    "clipped": bool(result.clipped),
+                                }
+                        else:
+                            self.backend.move_gripper(grip)
+                            close_issued = close_issued or closing
+                    else:
+                        self.backend.move_gripper(grip)
+                        close_issued = close_issued or closing
+                if trajectory is not None:
+                    trajectory.append(
+                        [time.perf_counter() - t0, *sr.pose.tolist(),
+                         *state.tcp_pose.tolist(), *state.wrench.tolist()]
+                    )
 
-            # bookkeeping. path_tracking_error is the lag between the PREVIOUS
-            # tick's command and the CURRENT measurement (a true residual), not
-            # the size of this tick's commanded step (skipped on the first tick).
-            if prev_cmd_pos is not None:
-                err = float(np.linalg.norm(prev_cmd_pos - state.tcp_position))
-                max_err = max(max_err, err)
-            spd = float(np.linalg.norm(state.tcp_position - prev_pos)) / self.dt
-            max_speed = max(max_speed, spd)
-            max_wrench = max(max_wrench, float(np.max(np.abs(state.wrench))))
-            prev_pos = state.tcp_position.copy()
-            prev_cmd_pos = sr.pose[:3].copy()
+                # bookkeeping. path_tracking_error is the lag between the PREVIOUS
+                # tick's command and the CURRENT measurement (a true residual), not
+                # the size of this tick's commanded step (skipped on the first tick).
+                if prev_cmd_pos is not None:
+                    err = float(np.linalg.norm(prev_cmd_pos - state.tcp_position))
+                    max_err = max(max_err, err)
+                spd = float(np.linalg.norm(state.tcp_position - prev_pos)) / self.dt
+                max_speed = max(max_speed, spd)
+                max_wrench = max(max_wrench, float(np.max(np.abs(state.wrench))))
+                prev_pos = state.tcp_position.copy()
+                prev_cmd_pos = sr.pose[:3].copy()
 
-            # maintain control rate
-            t_loop += self.dt
-            sleep = t_loop - time.perf_counter()
-            if sleep > 0:
-                time.sleep(sleep)
+                # maintain control rate
+                t_loop += self.dt
+                sleep = t_loop - time.perf_counter()
+                if sleep > 0:
+                    time.sleep(sleep)
+        finally:
+            if wrench_relaxed:
+                # Re-arm the firmware guard with the profile cap no matter how
+                # the chunk ended -- the allowance must never outlive its chunk.
+                # A restore failure (robot faulted at the last tick, comms
+                # hiccup) must not mask the chunk's real result: the next
+                # set_mode re-arms the firmware with the profile cap anyway,
+                # and the host-side guards always enforce the profile values.
+                try:
+                    self.backend.set_contact_wrench_limit(self.profile.max_contact_wrench)
+                except Exception:
+                    result.log["wrench_restore_failed"] = True
 
         end = self.get_state()
         result.executed_duration = end.stamp - start.stamp

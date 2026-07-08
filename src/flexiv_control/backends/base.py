@@ -89,6 +89,17 @@ class RobotBackend(abc.ABC):
         mujoco) inherit it unchanged; the flexiv_rdk backend overrides it."""
         return None
 
+    def set_contact_wrench_limit(self, wrench: np.ndarray) -> None:
+        """Update the robot-firmware contact-wrench guard mid-mode.
+
+        The executor calls this when a chunk carries a granted
+        ``contact_wrench_allowance`` (held-payload transport) and again with the
+        profile cap when the chunk ends, so the firmware guard tracks the same
+        effective cap as the host-side guards. Default no-op: sim/fake backends
+        have no firmware guard; the flexiv_rdk backend overrides it with
+        ``SetMaxContactWrench`` (Cartesian modes only)."""
+        return None
+
     def in_fault(self) -> bool:
         """Whether the robot is in a fault / protective-stop state.
 

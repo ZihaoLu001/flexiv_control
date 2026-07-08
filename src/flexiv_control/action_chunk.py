@@ -133,6 +133,27 @@ class CartesianChunk:
     # caps, applied as min(chunk, profile) -- tightening only.
     max_contact_wrench: Optional[np.ndarray] = None  # [fx,fy,fz,tx,ty,tz]
 
+    # Payload wrench allowance (None -> none). Added ON TOP of the profile's
+    # ``max_contact_wrench`` for this chunk, so a transport of a KNOWN held
+    # payload is not stopped by the object's own static wrench (weight +
+    # cantilever torque read by the wrist F/T). NOT a client-side override:
+    # the server clamps the request to the profile's ``max_wrench_allowance``
+    # (default zero -- a deployment must explicitly grant headroom in its
+    # safety YAML before any chunk can relax the contact guard).
+    contact_wrench_allowance: Optional[np.ndarray] = None  # [fx,fy,fz,tx,ty,tz]
+
+    # Gripper-close tracking gate (None -> disabled). When set, a CLOSING
+    # gripper command (``grasp=True`` or width below the measured width) is
+    # SKIPPED if the instantaneous TCP tracking error exceeds this bound at
+    # the tick where the close would fire -- a descend that stalled on
+    # unmodeled contact (impedance deflection below the wrench cap) leaves
+    # the tool at an unplanned height, and closing there pinches whatever is
+    # under the pads instead of the planned grasp. Once a close is skipped,
+    # every LATER closing command in the chunk is skipped too (the grasp plan
+    # is invalid; a follow-up force-grasp would blind-close on air or rim).
+    # Opening commands are never gated. Recorded in ``result.log['close_aborted']``.
+    grip_tracking_gate_m: Optional[float] = None
+
     # Expected active safety profile (reproducibility contract). Empty string
     # (default) = "execute under whatever profile is active". A non-empty name
     # is VERIFIED at execution: if it does not match the robot's active profile,
@@ -157,6 +178,13 @@ class CartesianChunk:
             raise ValueError("CartesianChunk needs at least one waypoint")
         if self.max_contact_wrench is not None:
             self.max_contact_wrench = np.asarray(self.max_contact_wrench, float).reshape(CART_DOF)
+        if self.contact_wrench_allowance is not None:
+            allow = np.asarray(self.contact_wrench_allowance, float).reshape(CART_DOF)
+            if np.any(allow < 0):
+                raise ValueError("contact_wrench_allowance must be non-negative")
+            self.contact_wrench_allowance = allow
+        if self.grip_tracking_gate_m is not None and self.grip_tracking_gate_m <= 0:
+            raise ValueError("grip_tracking_gate_m must be positive (or None to disable)")
 
     @property
     def horizon(self) -> int:

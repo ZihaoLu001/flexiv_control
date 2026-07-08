@@ -34,6 +34,12 @@ joint_limits:
 
 contact:
   max_wrench: [40, 40, 40, 5, 5, 5]
+  # Granted ceiling for per-chunk contact_wrench_allowance (held-payload
+  # transport): a held object's static weight + cantilever torque must not
+  # read as a collision at chunk entry. Chunks REQUEST an allowance; the
+  # server clamps the request to this ceiling, and collision stopping stays
+  # armed at max_wrench + allowance for the duration of that chunk only.
+  max_allowance: [15, 15, 15, 3, 3, 3]
 
 watchdog:
   command_timeout_ms: 200.0   # = ActAhead stop_if_tcp_stale_s (0.20 s)

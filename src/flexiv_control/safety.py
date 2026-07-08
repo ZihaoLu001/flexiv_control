@@ -66,6 +66,15 @@ class SafetyProfile:
     max_contact_wrench: np.ndarray = field(
         default_factory=lambda: np.array([40, 40, 40, 5, 5, 5], float)
     )
+    # Ceiling on the per-chunk ``contact_wrench_allowance`` a client may
+    # request on top of ``max_contact_wrench`` (held-payload transport).
+    # Default ZERO: no chunk can relax the contact guard unless this
+    # deployment's safety YAML explicitly grants headroom (``contact:
+    # max_allowance``). The server clamps requests to this, so a runaway
+    # client cannot disable collision stopping.
+    max_wrench_allowance: np.ndarray = field(
+        default_factory=lambda: np.zeros(6, float)
+    )
 
     # Watchdog timeouts (ms).
     command_timeout_ms: float = 100.0
@@ -112,6 +121,8 @@ class SafetyProfile:
         ct = d.get("contact", {})
         if "max_wrench" in ct:
             p.max_contact_wrench = np.asarray(ct["max_wrench"], float)
+        if "max_allowance" in ct:
+            p.max_wrench_allowance = np.asarray(ct["max_allowance"], float)
         wd = d.get("watchdog", {})
         p.command_timeout_ms = wd.get("command_timeout_ms", p.command_timeout_ms)
         p.state_timeout_ms = wd.get("state_timeout_ms", p.state_timeout_ms)
@@ -145,7 +156,10 @@ class SafetyProfile:
                 "lower": self.joint_lower.tolist(),
                 "upper": self.joint_upper.tolist(),
             },
-            "contact": {"max_wrench": self.max_contact_wrench.tolist()},
+            "contact": {
+                "max_wrench": self.max_contact_wrench.tolist(),
+                "max_allowance": self.max_wrench_allowance.tolist(),
+            },
             "watchdog": {
                 "command_timeout_ms": self.command_timeout_ms,
                 "state_timeout_ms": self.state_timeout_ms,
@@ -280,7 +294,11 @@ class SafetyFilter:
 
     # -- Cartesian -----------------------------------------------------------
     def filter_cartesian(
-        self, target_pose: np.ndarray, state: RobotState
+        self,
+        target_pose: np.ndarray,
+        state: RobotState,
+        *,
+        max_contact_wrench: Optional[np.ndarray] = None,
     ) -> SafetyResult:
         p = self.p
         target_pose = np.asarray(target_pose, float).reshape(7).copy()
@@ -288,8 +306,11 @@ class SafetyFilter:
         clipped = False
         reasons: list = []
 
-        # 1. Contact wrench: hard stop if exceeded (don't keep pushing).
-        if np.any(np.abs(state.wrench) > p.max_contact_wrench):
+        # 1. Contact wrench: hard stop if exceeded (don't keep pushing). The
+        #    executor passes the chunk-effective cap (profile +- per-chunk
+        #    tightening/allowance); standalone callers get the profile cap.
+        wrench_cap = p.max_contact_wrench if max_contact_wrench is None else max_contact_wrench
+        if np.any(np.abs(state.wrench) > wrench_cap):
             return SafetyResult(ok=False, reason=StopReason.CONTACT_WRENCH)
 
         # 2. Workspace box on position: clip back to the boundary, or -- when the

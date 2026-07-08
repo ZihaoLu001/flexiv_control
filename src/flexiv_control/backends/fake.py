@@ -151,6 +151,10 @@ class FakeBackend(RobotBackend):
         a = self._alpha
         self._q = (1 - a) * self._q + a * q
 
+    def set_contact_wrench_limit(self, wrench: np.ndarray) -> None:
+        # Mirror the firmware guard so tests can assert apply/restore.
+        self._max_wrench = np.asarray(wrench, float).copy()
+
     # -- gripper ------------------------------------------------------------
     def move_gripper(self, cmd: GripperCommand) -> None:
         self.gripper_log.append(cmd)
