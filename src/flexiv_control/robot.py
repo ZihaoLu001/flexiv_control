@@ -50,6 +50,15 @@ from .types import (
     StopReason,
 )
 
+# Settle window for the deferred gripper-close tracking gate (see
+# execute_cartesian_chunk): at a segment boundary the arm still trails its
+# command by its normal dynamic lag (~15-25 mm at transit speed on a Rizon),
+# so the gate must not sample there. After this long holding one commanded
+# pose, a healthy arm has converged to a few mm while a contact-stalled arm
+# still shows the full remaining distance. Bounded to half the close segment
+# so short segments still resolve in-segment.
+GRIP_GATE_SETTLE_S = 0.35
+
 
 class LeaseError(RuntimeError):
     pass
@@ -352,12 +361,41 @@ class Robot:
         prev_cmd_pos = None  # commanded TCP position from the previous tick
         close_aborted = False
         close_issued = False  # a closing command actually reached the gripper
+        pending_close: Optional[tuple] = None  # (GripperCommand, fire_at_tick)
+        tick_idx = 0
         trajectory: list = [] if record else None
         t0 = time.perf_counter()
         t_loop = time.perf_counter()
 
+        def _try_fire_close(g, state) -> None:
+            """Evaluate the tracking gate at the SETTLED instant and fire/abort.
+
+            Deferring to a settle window is what makes the gate separable: at
+            a segment boundary the arm still trails its command by its normal
+            dynamic lag (~15-25 mm at transit speed on a Rizon), so an
+            instantaneous check there cannot tell a healthy descend from a
+            stalled one. After ~0.35 s of holding the same commanded pose a
+            healthy arm converges to a few mm while a contact-stalled arm
+            still shows the full remaining descend distance."""
+            nonlocal close_aborted, close_issued
+            err_now = (float(np.linalg.norm(prev_cmd_pos - state.tcp_position))
+                       if prev_cmd_pos is not None else 0.0)
+            if close_aborted or result.clipped or err_now > chunk.grip_tracking_gate_m:
+                if not close_aborted:
+                    close_aborted = True
+                    result.log["close_aborted"] = {
+                        "segment": interp.current_segment,
+                        "tracking_error_m": err_now,
+                        "gate_m": float(chunk.grip_tracking_gate_m),
+                        "clipped": bool(result.clipped),
+                    }
+            else:
+                self.backend.move_gripper(g)
+                close_issued = True
+
         try:
             for pose, grip in interp:
+                tick_idx += 1
                 if self._cancel.is_set():
                     self._cancel.clear()
                     self.backend.stop()
@@ -389,17 +427,25 @@ class Robot:
                 if sr.clipped:
                     result.clipped = True
                 self.backend.stream_cartesian(sr.pose, wrench=_chunk_wrench(chunk))
+                # A deferred close whose settle window elapsed fires (or
+                # aborts) NOW, against the settled tracking error.
+                if pending_close is not None and tick_idx >= pending_close[1]:
+                    g = pending_close[0]
+                    pending_close = None
+                    _try_fire_close(g, state)
                 if grip is not None:
                     # Close-intent gate: a stalled/deflected descend (impedance
                     # yield below the wrench cap) leaves the tool at an UNPLANNED
                     # height -- closing there grasps the wrong geometry (rim
-                    # pinch). Gate CLOSING commands on the instantaneous tracking
-                    # error at the tick the close would fire; once one close is
-                    # skipped, all later closes this chunk are skipped too (the
+                    # pinch). A CLOSING command is DEFERRED by a settle window
+                    # (bounded within its segment) and then fired only if the
+                    # settled tracking error is inside the gate; once one close
+                    # aborts, all later closes this chunk abort too (the
                     # follow-up force-grasp would blind-close mid-air). Opens
-                    # always pass. A garbage width read (transient gripper-bus
-                    # failure returns 0.0) must not misclassify -- the width
-                    # comparison only counts against a sane positive reading.
+                    # always pass immediately. A garbage width read (transient
+                    # gripper-bus failure returns 0.0) must not misclassify --
+                    # the width comparison only counts against a sane positive
+                    # reading.
                     closing = bool(grip.grasp) or (
                         float(state.gripper_width) > 1e-6
                         and grip.width < float(state.gripper_width) - 1e-3)
@@ -413,20 +459,21 @@ class Robot:
                     gate_active = (chunk.grip_tracking_gate_m is not None
                                    and not (grip.grasp and close_issued))
                     if closing and gate_active:
-                        err_now = (float(np.linalg.norm(prev_cmd_pos - state.tcp_position))
-                                   if prev_cmd_pos is not None else 0.0)
-                        if close_aborted or result.clipped or err_now > chunk.grip_tracking_gate_m:
-                            if not close_aborted:
-                                close_aborted = True
-                                result.log["close_aborted"] = {
-                                    "segment": interp.current_segment,
-                                    "tracking_error_m": err_now,
-                                    "gate_m": float(chunk.grip_tracking_gate_m),
-                                    "clipped": bool(result.clipped),
-                                }
+                        if close_aborted:
+                            pass  # sticky: a skipped close invalidates the rest
                         else:
-                            self.backend.move_gripper(grip)
-                            close_issued = close_issued or closing
+                            if pending_close is not None:
+                                # A second close arrived before the first
+                                # resolved (very short segments): resolve the
+                                # first at the current instant, then defer this
+                                # one on its own window.
+                                g = pending_close[0]
+                                pending_close = None
+                                _try_fire_close(g, state)
+                            settle = min(
+                                int(round(GRIP_GATE_SETTLE_S * self.control_hz)),
+                                max(1, int(interp.current_segment_ticks) // 2))
+                            pending_close = (grip, tick_idx + settle)
                     else:
                         self.backend.move_gripper(grip)
                         close_issued = close_issued or closing
@@ -453,6 +500,24 @@ class Robot:
                 sleep = t_loop - time.perf_counter()
                 if sleep > 0:
                     time.sleep(sleep)
+            if pending_close is not None:
+                # The chunk ended inside a settle window (short final segment)
+                # or broke out mid-chunk. On a clean finish resolve the close
+                # against the final settled state; on a stop the motion is
+                # gone -- record the abort so the caller never mistakes the
+                # untouched OPEN width for an attempted grasp.
+                g = pending_close[0]
+                pending_close = None
+                if result.success:
+                    _try_fire_close(g, self.get_state())
+                elif not close_aborted:
+                    close_aborted = True
+                    result.log["close_aborted"] = {
+                        "segment": interp.current_segment,
+                        "reason": f"chunk_stopped:{result.stop_reason}",
+                        "gate_m": float(chunk.grip_tracking_gate_m),
+                        "clipped": bool(result.clipped),
+                    }
         finally:
             if wrench_relaxed:
                 # Re-arm the firmware guard with the profile cap no matter how

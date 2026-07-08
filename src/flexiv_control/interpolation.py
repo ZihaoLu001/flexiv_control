@@ -66,6 +66,9 @@ class CartesianChunkInterpolator:
         # Index of the waypoint currently being interpolated (updated during
         # iteration), so an aborting executor can report WHERE the run stopped.
         self.current_segment = 0
+        # Tick count of that segment (updated per segment): the executor's
+        # deferred gripper-close gate sizes its settle window within it.
+        self.current_segment_ticks = 1
 
     def _segment_ticks(self, prev_pos, tgt_pos, prev_quat, tgt_quat, wp) -> int:
         n = max(1, int(round(wp.resolve_duration(self.hz) * self.hz)))
@@ -85,6 +88,7 @@ class CartesianChunkInterpolator:
             tgt_pos = wp.position
             tgt_quat = prev_quat if wp.quaternion is None else wp.quaternion
             n = self._segment_ticks(prev_pos, tgt_pos, prev_quat, tgt_quat, wp)
+            self.current_segment_ticks = n
             for k in range(1, n + 1):
                 s = _cosine_blend(k / n)
                 pos = prev_pos + s * (tgt_pos - prev_pos)

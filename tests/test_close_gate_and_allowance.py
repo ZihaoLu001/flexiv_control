@@ -214,3 +214,56 @@ def test_sustain_never_gated_after_close_was_issued():
                        if not g.grasp and g.width < 0.08]
         assert len(moves_close) >= 1   # detector Move fired (healthy descend)
         assert len(grasps) >= 1        # force-closure sustain NOT gated
+
+
+def test_transit_lag_converges_and_close_fires_settled():
+    """Tonight's live failure: at the descend->close segment boundary the arm
+    trails its command by ~20-25mm of NORMAL dynamic lag (measured 23mm on the
+    real Rizon), which sat inside the old instantaneous gate and aborted every
+    healthy grasp. The gate now samples AFTER a settle window: a pure-delay
+    arm (measured = command from N ticks ago) converges once the command
+    holds, so the deferred close must FIRE."""
+    r = _robot()
+    with r:
+        r.acquire_lease("t")
+        r.start_cartesian_impedance()
+        backend = r.backend
+        original_read = backend.read_state
+        original_stream = backend.stream_cartesian
+        cmd_hist = []
+
+        def lagged_stream(pose, wrench=None):
+            cmd_hist.append(np.asarray(pose, float).copy())
+            return original_stream(pose, wrench=wrench)
+
+        def lagged_read():
+            s = original_read()
+            if len(cmd_hist) > 15:  # 15-tick transport delay (~23mm at speed)
+                s.tcp_pose = cmd_hist[-15].copy()
+            elif cmd_hist:
+                s.tcp_pose = cmd_hist[0].copy()
+            return s
+
+        backend.stream_cartesian = lagged_stream
+        backend.read_state = lagged_read
+        try:
+            # Long close-hold segment (0.5 s = 100 ticks at 200 Hz) so the
+            # settle window (min(70, 50) = 50 ticks) clears the 15-tick lag.
+            top = [0.45, 0.0, 0.30]
+            bottom = [0.45, 0.0, 0.26]
+            u = [[*top, 0.085, 20, 0], [*bottom, 0.085, 20, 0],
+                 [*bottom, 0.030, 20, 0], [*top, 0.030, 40, 1]]
+            wps = CartesianChunk.from_waypoint_array(
+                [row[:5] for row in u]).waypoints
+            for wp, row in zip(wps, u):
+                wp.gripper = GripperCommand(width=row[3], force=row[4],
+                                            grasp=bool(row[5]))
+                wp.duration = 0.5
+            res = r.execute_cartesian_chunk(
+                CartesianChunk(waypoints=wps, grip_tracking_gate_m=0.012))
+        finally:
+            backend.read_state = original_read
+            backend.stream_cartesian = original_stream
+        assert res.success
+        assert "close_aborted" not in res.log, res.log["close_aborted"]
+        assert len(_closes(r)) >= 2  # detector Move AND force Grasp both fired
